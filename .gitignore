@@ -35,3 +35,6 @@ desktop.ini
 # BootTidal.hs, which the project needs.
 .vscode/*
 !.vscode/settings.json
+
+# Claude Code local permissions — machine-specific, not project config
+.claude/settings.local.json
