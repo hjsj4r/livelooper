@@ -1,0 +1,85 @@
+// ============================================================
+//  LIVE LOOPER  ·  click.scd
+//  Tempo-locked metronome, generated in SC, RIGHT channel only.
+//  Loaded by startup.scd after looper.scd.
+//
+//  L/R HACK: the click is written to bus 1 (RIGHT) only. Feed the PA from the
+//  H8 Line Out LEFT channel (mono cable, tip = left) so the audience never hears
+//  the click; you monitor headphones (both channels) and hear it on the right.
+// ============================================================
+
+// ── Settings come from config.scd ───────────────────────────
+// (~clickDiv, ~clickAmp, ~clickOffset, ~clickPedal, ~midiChan)
+// ~clickOffset is read LIVE on every beat, so you can tweak it in the interpreter and
+// hear it immediately — bigger = click later. Write the value you land on back to config.
+~clickDiv ?? {
+    Error("click.scd: config.scd has not been loaded. Evaluate startup.scd instead.").throw
+};
+
+// ── Runtime state (not config — survives a reload) ──────────
+~clickOn = ~clickOn ? false;      // start muted — pedal or dashboard toggles it
+
+// ── Click sound ─────────────────────────────────────────────
+// accent = 1 on the cycle downbeat (higher + louder). RIGHT channel only.
+SynthDef(\click, { |accent = 0, amp = 0.5|
+    var freq = Select.kr(accent, [1000, 1600]);
+    var env  = EnvGen.kr(Env.perc(0.001, 0.04), doneAction: 2);
+    var sig  = SinOsc.ar(freq, 0, env * amp * Select.kr(accent, [0.7, 1.0]));
+    Out.ar(1, sig);   // bus 1 = RIGHT only (private click)
+}).add;
+
+// ── Beat scheduler ──────────────────────────────────────────
+// Re-derives the beat grid's TIMING from the OSC clock each iteration (so it can't
+// drift), but keeps nextBeat strictly MONOTONIC so a beat is never fired twice —
+// that double-fire was the "flam". ~clickGen makes any stale scheduler from an
+// earlier evaluation self-terminate, so re-loading can't stack up loops.
+// PANIC SURVIVAL — Ctrl+. calls SystemClock.clear before anything else, which cancels
+// this Task's next wakeup and silently stops the click for good. So the scheduler lives
+// in a function that CmdPeriod can call again. CmdPeriod runs its hooks AFTER clearing
+// the clocks, so re-playing here sticks.
+~startClickTask !? { CmdPeriod.remove(~startClickTask) };   // don't stack on re-eval
+~startClickTask = {
+    ~clickGen = (~clickGen ? 0) + 1;
+    ~clickRoutine !? { ~clickRoutine.stop };   // kill old Routine-based version if present
+    ~clickTask   !? { ~clickTask.stop };
+    ~clickTask = Task({
+        var myGen = ~clickGen;
+        var cps, div, cyclePos, beatPos, nextBeat, dt;
+        cps      = (~cps ? 0.5).max(0.001);
+        div      = (~clickDiv ? 4).max(1);
+        cyclePos = (~lastCycle ? 0) + ((Main.elapsedTime - (~lastEventTime ? Main.elapsedTime)) * cps);
+        nextBeat = (cyclePos * div).ceil;      // first beat at/after now
+        while({ myGen == ~clickGen }, {        // self-terminate if a newer load happened
+            cps      = (~cps ? 0.5).max(0.001);
+            div      = (~clickDiv ? 4).max(1);
+            cyclePos = (~lastCycle ? 0) + ((Main.elapsedTime - (~lastEventTime ? Main.elapsedTime)) * cps);
+            beatPos  = cyclePos * div;
+            // if we've fallen behind (tempo jump / GC pause), catch up without a burst
+            if ((beatPos - nextBeat) > 0.25) { nextBeat = beatPos.ceil };
+            dt = (nextBeat - beatPos) / (cps * div);
+            (dt + ~clickOffset).max(0).wait;   // wait to the beat (nudged by offset)
+            if (~clickOn and: { myGen == ~clickGen }) {
+                s.makeBundle(s.latency, {
+                    Synth(\click, [\accent, (nextBeat % div == 0).asInteger, \amp, ~clickAmp]);
+                });
+            };
+            nextBeat = nextBeat + 1;           // strictly monotonic — never repeat a beat
+        });
+    }).play(SystemClock);
+};
+CmdPeriod.add(~startClickTask);
+~startClickTask.();
+
+// ── Pedal toggle ────────────────────────────────────────────
+// .fix — otherwise Ctrl+. frees this responder and the click pedal goes dead.
+// ~clickPedal = nil disables MIDI control of the click entirely, which is the safe
+// default on a channel shared with a keyboard: any note number chosen here would also
+// fire whenever that key is played.
+MIDIdef.noteOn(\clickPedal, { |vel, note, chan|
+    if (~clickPedal.notNil and: { chan == ~midiChan } and: { note == ~clickPedal }) {
+        ~clickOn = ~clickOn.not;
+        ("Click " ++ (~clickOn.if({ "ON" }, { "OFF" }))).postln;
+    };
+}).fix;
+
+"=== click.scd loaded — pedal 62 toggles | ~clickDiv=4 | RIGHT channel ===".postln;

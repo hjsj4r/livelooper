@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live Looper</title>
+<style>
+  :root {
+    --bg: #0e1116; --panel: #171b22; --line: #262c37;
+    --text: #e6e9ef; --dim: #8b93a1;
+    --idle: #5a6472; --rec: #ff4d5e; --play: #37d67a; --dub: #ffb020; --accent: #4da3ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.4 -apple-system, Segoe UI, Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px 20px 60px; }
+  .topbar { display: flex; align-items: center; gap: 16px; margin-bottom: 22px; }
+  .title { font-weight: 700; letter-spacing: .04em; font-size: 18px; }
+  .conn { width: 9px; height: 9px; border-radius: 50%; background: var(--rec); box-shadow: 0 0 8px var(--rec); }
+  .conn.on { background: var(--play); box-shadow: 0 0 8px var(--play); }
+  .spacer { flex: 1; }
+  .metric { font-variant-numeric: tabular-nums; color: var(--dim); font-size: 13px; }
+  .metric b { color: var(--text); font-size: 20px; font-weight: 600; }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+  .label { text-transform: uppercase; letter-spacing: .08em; font-size: 11px; color: var(--dim); margin-bottom: 12px; }
+
+  /* metronome */
+  .beats { display: flex; gap: 10px; margin-bottom: 14px; }
+  .beat { flex: 1; height: 46px; border-radius: 8px; background: #10141b; border: 1px solid var(--line); transition: background .05s, box-shadow .05s, transform .05s; }
+  .beat.on { background: var(--accent); box-shadow: 0 0 16px var(--accent); transform: translateY(-2px); }
+  .beat.on.down { background: #fff; box-shadow: 0 0 20px #fff; }
+  .sweep { height: 6px; background: #10141b; border-radius: 3px; overflow: hidden; }
+  .fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), #7ec2ff); }
+
+  /* tracks */
+  .tracks { display: flex; flex-direction: column; gap: 10px; }
+  .track { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; row-gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .track.focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .track-id { width: 120px; flex-shrink: 0; cursor: pointer; }
+  .track-name { font-weight: 600; }
+  .track-in { color: var(--dim); font-size: 12px; }
+  .track-badge { flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: .05em; padding: 4px 9px; border-radius: 5px; text-transform: uppercase; background: var(--idle); color: #04121f; }
+  .fader { flex: 1 1 140px; min-width: 100px; accent-color: var(--accent); }
+  .track button { background: #10141b; color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
+  .track button:hover { border-color: #3a4557; }
+  .track .rec { min-width: 104px; }
+  .track .clr:hover { border-color: var(--rec); color: var(--rec); }
+
+  .row { display: flex; gap: 10px; margin-top: 16px; }
+  button.act { background: #10141b; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 12px 20px; font-size: 14px; cursor: pointer; }
+  button.act:hover { border-color: #3a4557; }
+  button.act.on { border-color: var(--play); color: var(--play); }
+  button.danger:hover { border-color: var(--rec); color: var(--rec); }
+
+  /* sample browser */
+  .browser-top { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+  .search { flex: 1; background: #10141b; border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 10px 12px; font: inherit; }
+  .search:focus { outline: none; border-color: var(--accent); }
+  .dim { color: var(--dim); font-size: 12px; white-space: nowrap; }
+  .banks { max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
+  .bank { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex-shrink: 0; }
+  .bank-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer; }
+  .bank-head:hover { background: #10141b; }
+  .bank-name { font-weight: 600; }
+  .bank-count { color: var(--dim); font-size: 12px; margin-left: auto; }
+  .chips { display: none; flex-wrap: wrap; gap: 6px; padding: 0 12px 12px; }
+  .bank.open .chips { display: flex; }
+  .chip { padding: 5px 9px; background: #10141b; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .chip:hover { border-color: var(--accent); color: var(--accent); }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #04121f; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <span class="conn" id="conn"></span>
+    <span class="title">LIVE&nbsp;LOOPER</span>
+    <span class="spacer"></span>
+    <span class="metric">cps <b id="cps">–</b></span>
+    <span class="metric">tempo <b id="bpm">–</b> bpm</span>
+  </div>
+
+  <div class="panel">
+    <div class="label" style="display:flex;align-items:center;justify-content:space-between">
+      <span>Metronome</span>
+      <button class="act" id="clickBtn" style="padding:6px 14px;font-size:12px">Click: —</button>
+    </div>
+    <div class="beats" id="beats"></div>
+    <div class="sweep"><div class="fill" id="fill"></div></div>
+  </div>
+
+  <div class="panel">
+    <div class="label">Tidal patterns level</div>
+    <input type="range" id="dirtFader" min="0" max="1" step="0.01" value="1" style="width:100%;accent-color:var(--accent)">
+  </div>
+
+  <div class="panel">
+    <div class="label">Tracks (click a track's name to focus it for the pedals)</div>
+    <div class="tracks" id="tracks"></div>
+  </div>
+
+  <div class="panel">
+    <div class="label">Sample library</div>
+    <div class="browser-top">
+      <input id="search" class="search" placeholder="filter banks…" autocomplete="off">
+      <button class="act" id="refresh">Refresh</button>
+      <span class="dim" id="bankCount"></span>
+    </div>
+    <div class="banks" id="banks"></div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const STATE_COLORS = { idle:'--idle', recording:'--rec', playing:'--play', overdub:'--dub' };
+
+// ---- command helper ----
+function cmd(address, args=[]) {
+  fetch('/cmd', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({address, args}) });
+}
+$('clickBtn').onclick = () => cmd('/cmd/clickToggle', []);
+$('dirtFader').oninput = (e) => cmd('/cmd/dirtLevel', [parseFloat(e.target.value)]);
+
+// ---- tracks ----
+let focusIdx = 0;
+const REC_LABEL = { idle: '● Record', recording: 'recording…', playing: '＋ Overdub', overdub: '■ Play' };
+
+function buildTracks(inputs) {
+  const c = $('tracks'); c.innerHTML = '';
+  inputs.forEach((inp, idx) => {
+    const el = document.createElement('div');
+    el.className = 'track'; el.dataset.idx = idx;
+    el.innerHTML =
+      `<div class="track-id"><div class="track-name">Track ${idx}</div><div class="track-in">input ${inp}</div></div>` +
+      `<span class="track-badge">IDLE</span>` +
+      `<input type="range" class="fader" min="0" max="1" step="0.01" value="1">` +
+      `<button class="rec">● Record</button><button class="clr">Clear</button>`;
+    el.querySelector('.track-id').onclick = () => cmd('/cmd/focus', [idx]);
+    el.querySelector('.rec').onclick = () => cmd('/cmd/trackMain', [idx]);
+    el.querySelector('.clr').onclick = () => cmd('/cmd/trackClear', [idx]);
+    el.querySelector('.fader').oninput = (e) => {
+      lastLocalEdit[idx] = performance.now();   // see applyLevels
+      cmd('/cmd/trackLevel', [idx, parseFloat(e.target.value)]);
+    };
+    c.appendChild(el);
+  });
+  setFocus(focusIdx);
+}
+function updateTracks(states) {
+  const c = $('tracks');
+  if (c.children.length === 0 && states.length > 0) { cmd('/cmd/getTracks', []); return; }  // self-heal
+  [...c.children].forEach((el, idx) => {
+    const st = states[idx] || 'idle';
+    const badge = el.querySelector('.track-badge');
+    badge.textContent = st.toUpperCase();
+    badge.style.background = getComputedStyle(document.documentElement).getPropertyValue(STATE_COLORS[st] || '--idle');
+    el.querySelector('.rec').textContent = REC_LABEL[st] || '● Record';
+  });
+}
+function setFocus(idx) {
+  focusIdx = idx;
+  [...$('tracks').children].forEach((el, i) => el.classList.toggle('focus', i === idx));
+}
+
+// Fader positions pushed from SC — a hardware knob on the MPK moves these.
+// While you're dragging a slider here, your own move round-trips through SC and comes
+// straight back; without a guard a slow round-trip would yank the handle back to a value
+// you've already moved past. So ignore remote updates for a slider you just touched.
+const lastLocalEdit = [];
+function applyLevels(levels) {
+  [...$('tracks').children].forEach((el, idx) => {
+    const v = levels[idx];
+    if (v === undefined) return;
+    if (performance.now() - (lastLocalEdit[idx] || 0) < 400) return;
+    const f = el.querySelector('.fader');
+    if (Math.abs(parseFloat(f.value) - v) > 0.001) f.value = v;
+  });
+}
+
+// ---- metronome ----
+// SC sends a clock REFERENCE (cps + the phase at send time) about twice a second; we
+// extrapolate the rest here in requestAnimationFrame. That means the animation is tied
+// to the display's refresh instead of to the arrival of network packets — smoother than
+// the old 30 Hz push, on ~2 messages/second instead of 60.
+let curDiv = 0, lastActive = -1;
+let clock = null;                       // { cps, phase, div, t0 }
+
+function buildBeats(div) {
+  if (div === curDiv) return;
+  curDiv = div; lastActive = -1;
+  const el = $('beats'); el.innerHTML = '';
+  for (let i = 0; i < div; i++) { const b = document.createElement('div'); b.className = 'beat'; el.appendChild(b); }
+}
+function onClock(cps, phase, div) {
+  clock = { cps, phase, div, t0: performance.now() };
+  buildBeats(div);
+  $('cps').textContent = cps.toFixed(2);
+  $('bpm').textContent = Math.round(cps * div * 60);
+}
+function renderMetro(phase, div) {
+  const active = Math.floor(phase * div) % div;
+  if (active !== lastActive) {          // only touch the DOM when the beat changes
+    lastActive = active;
+    [...$('beats').children].forEach((b, i) => {
+      const on = i === active;
+      b.classList.toggle('on', on);
+      b.classList.toggle('down', on && i === 0);
+    });
+  }
+  $('fill').style.width = (phase * 100).toFixed(1) + '%';
+}
+function frame() {
+  if (clock) {
+    const elapsed = (performance.now() - clock.t0) / 1000;
+    let p = (clock.phase + (elapsed * clock.cps)) % 1;
+    if (p < 0) p += 1;
+    renderMetro(p, clock.div);
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// ---- sample browser ----
+let banks = [];
+let openBank = null;
+const banksEl = $('banks'), searchEl = $('search');
+
+function renderBanks() {
+  const q = searchEl.value.trim().toLowerCase();
+  const list = q ? banks.filter(b => b.name.toLowerCase().includes(q)) : banks;
+  $('bankCount').textContent = banks.length ? `${list.length} / ${banks.length}` : '';
+  banksEl.innerHTML = '';
+  if (list.length === 0) {
+    banksEl.innerHTML = `<div class="dim" style="padding:6px 2px">${banks.length ? 'no banks match' : 'waiting for SuperCollider…'}</div>`;
+    return;
+  }
+  for (const b of list) {
+    const wrap = document.createElement('div');
+    wrap.className = 'bank' + (openBank === b.name ? ' open' : '');
+    const head = document.createElement('div');
+    head.className = 'bank-head';
+    head.innerHTML = `<span class="bank-name">${b.name}</span><span class="bank-count">${b.count}</span>`;
+    head.onclick = () => { openBank = (openBank === b.name ? null : b.name); renderBanks(); };
+    wrap.appendChild(head);
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    if (openBank === b.name) {
+      for (let i = 0; i < b.count; i++) {
+        const c = document.createElement('div');
+        c.className = 'chip'; c.textContent = ':' + i;
+        c.onclick = (e) => { e.stopPropagation(); preview(b.name, i); };
+        chips.appendChild(c);
+      }
+    }
+    wrap.appendChild(chips);
+    banksEl.appendChild(wrap);
+  }
+}
+function preview(name, idx) {
+  cmd('/cmd/preview', [name, idx]);
+  const text = `${name}:${idx}`;
+  if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+  toast(`▶ ${text}  (copied)`);
+}
+let toastTimer;
+function toast(msg) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1200);
+}
+searchEl.oninput = renderBanks;
+function requestBanks() { cmd('/cmd/getBanks', []); }
+$('refresh').onclick = requestBanks;
+renderBanks();   // initial paint (shows the waiting hint until banks arrive)
+
+// ---- incoming state stream ----
+const es = new EventSource('/events');
+es.onopen  = () => { $('conn').classList.add('on'); requestBanks(); cmd('/cmd/getTracks', []); };
+es.onerror = () => $('conn').classList.remove('on');
+es.onmessage = (e) => {
+  let m; try { m = JSON.parse(e.data); } catch (_) { return; }
+  if (m.address === '/clock') {
+    const [cps, phase, div] = m.args;
+    onClock(cps, phase, div);
+  } else if (m.address === '/state') {
+    const [focus, clickOn] = m.args;
+    setFocus(focus);
+    updateTracks(m.args.slice(2));
+    const cb = $('clickBtn');
+    cb.textContent = 'Click: ' + (clickOn ? 'on' : 'off');
+    cb.classList.toggle('on', !!clickOn);
+  } else if (m.address === '/levels') {
+    applyLevels(m.args);
+  } else if (m.address === '/tracksInit') {
+    buildTracks(m.args.slice(1));          // args[0] = count, rest = input channels
+  } else if (m.address === '/banksClear') {
+    banks = [];
+  } else if (m.address === '/banksAdd') {
+    for (let i = 0; i + 1 < m.args.length; i += 2) banks.push({ name: String(m.args[i]), count: Number(m.args[i + 1]) });
+  } else if (m.address === '/banksDone') {
+    banks.sort((a, b) => a.name.localeCompare(b.name));
+    banksLoaded = true;
+    renderBanks();                 // render ONCE, after all chunks arrive
+  }
+};
+
+// samples may still be loading in SC on first connect — ask until the list is done
+let banksLoaded = false, bankTries = 0;
+const bankPoll = setInterval(() => {
+  if (banksLoaded || ++bankTries > 10) clearInterval(bankPoll); else requestBanks();
+}, 700);
+</script>
+</body>
+</html>

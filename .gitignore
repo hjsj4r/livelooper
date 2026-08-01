@@ -1,0 +1,37 @@
+# ── Audio ───────────────────────────────────────────────────
+# Sample banks are your own material and binary — git handles them badly and they bloat
+# the repo permanently. The folder layout and its README are tracked; the audio is not.
+# Delete these three lines if you'd rather version your banks with the project.
+samples/**/*.wav
+samples/**/*.aif
+samples/**/*.aiff
+samples/**/*.flac
+samples/**/*.mp3
+samples/**/*.ogg
+
+# recordings / bounces
+*.wav
+*.aiff
+*.flac
+!samples/README.md
+
+# ── SuperCollider ───────────────────────────────────────────
+synthdefs/
+*.scsyndef
+sclang_conf.yaml
+
+# ── Node ────────────────────────────────────────────────────
+node_modules/
+package-lock.json
+
+# ── Editors / OS ────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+
+# VS Code: settings.json IS tracked on purpose — it points the Tidal extension at
+# BootTidal.hs, which the project needs.
+.vscode/*
+!.vscode/settings.json

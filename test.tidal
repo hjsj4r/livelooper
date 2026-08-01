@@ -1,0 +1,61 @@
+-- ============================================================
+--  LIVE LOOPER · Tidal test
+--  Prereq: SuperCollider startup.scd running (SuperDirt on 57120).
+--  Boot Tidal: put the cursor in a line and press Shift+Enter
+--  (the first evaluation boots GHCi + Tidal automatically).
+--  Evaluate a block: Ctrl+Enter.  Silence all: evaluate  hush
+-- ============================================================
+
+-- tempo: cycles per second. 0.5 cps = 2 s/cycle. Your SC click reads this.
+setcps (0.3)
+
+-- a beat — should play through SuperDirt AND lock the SC click to it
+d1 $ s "bd sd hh cp"
+
+-- second channel (orbit 1) — also audible now that all orbits share the out
+d2 $ s "~ ~ rm:1 ~ rm:1 ~ ~ ~ rm:1 ~ ~ rm:1 ~ ~ ~ ~" # gain 0.9
+
+d1 $ stack [struct ("1 0 0 0 0 1 0 0 1 0 0 0 0 1 0 0") $ sound "bd", struct ("0 0 1 0 0 0 1 0 0 0 1 0 0 0 1 0") $ sound "sd", struct ("0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0") $ sound "hc"]
+
+-- ============================================================
+--  MULTILINE BLOCKS
+--  Ctrl+Enter evaluates the whole BLOCK the cursor sits in. A block is every
+--  contiguous non-blank line — a blank line is the separator. That's why the
+--  one-liners above feel like "one line at a time": each one IS its own block.
+--  Keep the lines of a pattern touching; leave a blank line between patterns.
+--  (Shift+Enter stays single-line.)
+-- ============================================================
+
+-- One expression, many lines. Indent however you like — the extension wraps the
+-- block in GHCi's  :{ ... :}  which suspends Haskell's layout rule.
+d1 $ stack [
+  s "bd*4",
+  s "~ cp ~ cp",
+  s "hh*8" # gain 0.8
+]
+
+-- Leading-operator style reads well for long chains. Cursor anywhere inside.
+d2 $ every 4 (fast 2)
+   $ n "0 .. 7"
+   # s "jungle"
+   # room 0.3
+   # gain 0.9
+
+-- TRAP: two statements in one block get GLUED into a single expression and fail
+-- with a baffling type error ("applied to three visible arguments..."). Wrap them
+-- in `do` — which is also how you swap several channels in perfect sync.
+do
+  d1 $ s "bd*4"
+  d2 $ s "~ cp"
+  d3 $ s "hh*8" # gain 0.7
+
+-- Synchronised stop, same trick:
+do
+  d1 silence
+  d2 silence
+
+-- handy:
+-- d1 silence      -- stop just channel 1
+-- hush            -- stop everything
+
+
