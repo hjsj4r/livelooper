@@ -73,17 +73,25 @@
                     ).postln;
                 };
                 "".postln;
-                // The predicted hole: recording starts early by the lookahead, which the
-                // click calibration already measured as ~clickOffset + s.latency.
-                predicted = ((~clickOffset ? 0) + s.latency) * 1000;
-                ("  predicted hole if the grid anchor is early: "
-                    ++ predicted.round(0.1) ++ " ms").postln;
-                ("  longest hole found: " ++ (runs[0][\len] * win / sr * 1000).round(0.1)
-                    ++ " ms").postln;
-                if (((runs[0][\len] * win / sr * 1000) - predicted).abs < (predicted * 0.4)) {
-                    "  *** MATCHES — the recording window is offset from the music. ***".postln;
+                // A hole caused by the grid anchor lands exactly AT the punch-in point,
+                // because that is where the recording window opened. Holes anywhere else
+                // are rests in what you played. Judging by POSITION is reliable; judging
+                // by size is not, since a musical rest can be any length.
+                predicted = runs.detect { |r|
+                    var at = (r[\start] * win) / arr.size;
+                    var sp = (t[\startPhase] ? 0);
+                    ((at - sp).abs < 0.02) or: { (at - sp).abs > 0.98 };   // incl. wrap
+                };
+                if (predicted.notNil and: { (predicted[\len] * win / sr) > 0.05 }) {
+                    ("  *** A " ++ (predicted[\len] * win / sr * 1000).round(0.1)
+                        ++ " ms hole sits AT the punch-in point ("
+                        ++ ((t[\startPhase] ? 0) * 100).round(0.1) ++ "%). ***").postln;
+                    "  *** The recording window is offset from the music: the beat grid".postln;
+                    "  *** must anchor to ev[\\timeStamp], not Main.elapsedTime.".postln;
+                    "  *** Check ~dirt.receiveAction in looper.scd. ***".postln;
                 } {
-                    "  (does not match that prediction — something else)".postln;
+                    "  Nothing at the punch-in point — the recording window is aligned.".postln;
+                    "  The regions above are rests in what you played, not lost audio.".postln;
                 };
             };
             "==============================".postln;
