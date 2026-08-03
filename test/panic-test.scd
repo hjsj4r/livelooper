@@ -71,6 +71,17 @@ s.waitForBoot({
         ok.("tempo tracking works",     ~cps == 0.75);
         ok.("receiveAction is installed", ~dirt.receiveAction.notNil);
 
+        // The beat grid must be anchored to when an event SOUNDS, not when it arrives.
+        // Anchored to arrival, recording opens early and leaves a hole at the punch-in
+        // point. Send an event timestamped well ahead, then check SOON — the anchor has
+        // to still be in the future, which only happens if it came from ev[\timeStamp].
+        self.sendBundle(0.8, ['/dirt/play', "s", "bd", "cps", 0.75, "cycle", 41.0, "orbit", 0]);
+        0.2.wait;
+        ("        (anchor is " ++ ((~lastEventTime - Main.elapsedTime) * 1000).round(0.1)
+            ++ " ms ahead of now)").postln;
+        ok.("grid anchored to sounding time, not arrival",
+            (~lastEventTime - Main.elapsedTime) > 0.3);
+
         // the whole point of the panic fix: these must be permanent, or CmdPeriod frees
         // them. Tempo tracking no longer needs it — receiveAction is a plain ivar on
         // ~dirt, and SuperDirt .fix'es the OSCFunc that calls it.

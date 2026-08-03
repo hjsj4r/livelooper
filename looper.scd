@@ -32,9 +32,18 @@
 ~dirt ?? {
     Error("looper.scd: SuperDirt is not running. Evaluate startup.scd instead.").throw
 };
+// The anchor is ev[\timeStamp] — when the event SOUNDS — not Main.elapsedTime, which is
+// merely when we heard about it. Tidal sends each event ahead of time (~220 ms on this
+// rig) and sclang hands it over immediately, so anchoring to arrival put the whole beat
+// grid that far early: recording opened before the downbeat, caught silence at the head,
+// and clipped the same amount off the tail. That showed up as a hole exactly at the
+// punch-in point — see tools/loop-inspect.scd.
 ~dirt.receiveAction = { |ev|
     ev[\cps]   !? { |c| ~cps = c };
-    ev[\cycle] !? { |c| ~lastCycle = c; ~lastEventTime = Main.elapsedTime };
+    ev[\cycle] !? { |c|
+        ~lastCycle     = c;
+        ~lastEventTime = ev[\timeStamp] ? Main.elapsedTime;
+    };
 };
 
 // Where Tidal's cycle counter is right now, extrapolated from the last event we saw.

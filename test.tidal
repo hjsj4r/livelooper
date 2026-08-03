@@ -7,7 +7,7 @@
 -- ============================================================
 
 -- tempo: cycles per second. 0.5 cps = 2 s/cycle. Your SC click reads this.
-setcps (0.3)
+setcps (0.6)
 
 -- a beat — should play through SuperDirt AND lock the SC click to it
 d1 $ s "bd sd hh cp"

@@ -99,9 +99,12 @@
 // ── Click ───────────────────────────────────────────────────
 ~clickDiv    = 4;            // clicks per cycle (4 = quarter notes in 4/4)
 ~clickAmp    = 0.5;
-~clickOffset = 0.026;         // phase trim vs the music (seconds). Read live on every
-                             // beat, so you can tweak it in the interpreter and hear it
-                             // immediately — then write the value back here.
+// Phase trim vs the music, in seconds. Read live on every beat, so you can tweak it in
+// the interpreter and hear it immediately — then write the value back here.
+// 0 is now correct by construction: the beat grid is anchored to when events SOUND, and
+// the click hands the server its own lead, so there is no systematic error left to
+// cancel. Treat any non-zero value as taste (or as a sign something else is off).
+~clickOffset = 0.0;
 
 
 // ── Dashboard ───────────────────────────────────────────────

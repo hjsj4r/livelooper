@@ -44,7 +44,7 @@ SynthDef(\click, { |accent = 0, amp = 0.5|
     ~clickTask   !? { ~clickTask.stop };
     ~clickTask = Task({
         var myGen = ~clickGen;
-        var cps, div, cyclePos, beatPos, nextBeat, dt;
+        var cps, div, cyclePos, beatPos, nextBeat, dt, target, lead;
         cps      = (~cps ? 0.5).max(0.001);
         div      = (~clickDiv ? 4).max(1);
         cyclePos = (~lastCycle ? 0) + ((Main.elapsedTime - (~lastEventTime ? Main.elapsedTime)) * cps);
@@ -57,9 +57,17 @@ SynthDef(\click, { |accent = 0, amp = 0.5|
             // if we've fallen behind (tempo jump / GC pause), catch up without a burst
             if ((beatPos - nextBeat) > 0.25) { nextBeat = beatPos.ceil };
             dt = (nextBeat - beatPos) / (cps * div);
-            (dt + ~clickOffset).max(0).wait;   // wait to the beat (nudged by offset)
+            // `target` is how long until the click should SOUND. Give the server as much
+            // lead as we actually have (capped at s.latency) and timestamp the bundle for
+            // the remainder, so the click lands ON the beat rather than s.latency after
+            // it. Taking the min also means a click interval shorter than s.latency still
+            // works — it just gets less lead — instead of firing late or spinning.
+            // With the grid anchored to when events sound, the ideal ~clickOffset is 0.
+            target = dt + ~clickOffset;
+            lead   = target.clip(0, s.latency);
+            (target - lead).max(0).wait;
             if (~clickOn and: { myGen == ~clickGen }) {
-                s.makeBundle(s.latency, {
+                s.makeBundle(lead, {
                     Synth(\click, [\accent, (nextBeat % div == 0).asInteger, \amp, ~clickAmp]);
                 });
             };

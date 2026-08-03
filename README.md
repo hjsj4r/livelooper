@@ -95,7 +95,8 @@ sequence — map it rather than guessing:
 | `tools/input-scan.scd` | Maps a physical jack to its SC input index |
 | `tools/midi-monitor.scd` | Shows what a controller sends, per device, with a summary table |
 | `tools/sync-check.scd` | Diagnoses loop timing / tempo mismatches |
-| `tools/click-calibrate.scd` | Derives `~clickOffset` from measurement |
+| `tools/click-calibrate.scd` | Verifies the beat-grid anchor; `~clickOffset` should be 0 |
+| `tools/loop-inspect.scd` | Reads a recorded loop back and finds holes in it |
 | `test/midi-test.scd` | Regression test for the MIDI control surface |
 | `test/panic-test.scd`  | Regression test for Ctrl+. recovery (see below) |
 | `test/looper-test.scd` | Regression test for the record path + signal path |
@@ -149,6 +150,17 @@ The post window shows both facts when you arm a track:
 [t0 in9] waiting 0.5s for cycle 1 (phrase pos 25.0%)...
 ```
 
+The beat grid is anchored to when a pattern event **sounds** (`ev[\timeStamp]`), not when
+its OSC message arrives. Tidal sends events ~220 ms ahead, so anchoring to arrival ran the
+whole grid that far early: recording opened before the downbeat, captured silence at the
+head, and clipped the same amount off the tail — an audible hole exactly at the punch-in
+point. If a loop ever sounds like it has a gap, that is what to suspect:
+
+```supercollider
+"D:/livelooper/tools/loop-inspect.scd".load;
+~loopInspect.(0);      // reads the loop back and reports any silent regions
+```
+
 ## Panic — Ctrl+. is safe
 
 `Ctrl+.` (CmdPeriod) is SuperCollider's panic stop. It clears both clocks, frees every
@@ -179,7 +191,7 @@ the system default device):
 
 ```powershell
 $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
-& $sc -D d:/livelooper/test/panic-test.scd       # 24 passed
+& $sc -D d:/livelooper/test/panic-test.scd       # 25 passed
 & $sc -D d:/livelooper/test/looper-test.scd      # 29 passed
 & $sc -D d:/livelooper/test/dashboard-test.scd   # 17 passed
 & $sc -D d:/livelooper/test/midi-test.scd        # 17 passed
