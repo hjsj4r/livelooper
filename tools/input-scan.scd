@@ -2,52 +2,41 @@
 //  LIVE LOOPER · tools/input-scan.scd
 //  Which SuperCollider input index is that physical H8 jack?
 //
-//  The H8's ASIO channel order is not obvious and the project's comments have
-//  disagreed about it. Rather than guess: run this, play into ONE jack, and read
-//  the index off the post window. Whatever it prints is what goes in ~trackInputs.
+//  The H8's ASIO channel order is not a sequence and the project's comments have
+//  disagreed about it, so map jacks rather than assuming. Safe to run mid-session: it
+//  only listens, it never outputs audio.
 //
-//  Safe to run mid-session: it only listens, it never outputs audio.
+//  GUIDED MAPPING (what you want for setting up ~trackInputs):
+//      "D:/livelooper/tools/input-scan.scd".load;
+//      ~mapInput.("mic");        // then play into that jack while it listens
+//      ~mapInput.("guitar");
+//      ~mapInput.("synth");
+//      ~inputMapShow.();         // prints a paste-ready ~trackInputs line
 //
-//  Run (server already booted):   "D:/livelooper/tools/input-scan.scd".load;
-//  Stop:                          ~inputScanStop.();
+//  It accepts an answer only when one channel (or one clear PAIR, for a stereo mic)
+//  dominates. Bleed between inputs is normal and is exactly what makes a naive
+//  "loudest channel" reading useless, so ambiguous results are rejected rather than
+//  guessed at.
+//
+//  FREE MONITORING (just watch levels):
+//      ~inputScanStart.();  ~inputScanStop.();
 // ============================================================
-(
+
+// Live monitoring threshold. 0.05 rather than 0.01: below that you are looking at hum
+// and bleed, not at someone playing.
+~inputScanThresh = 0.05;
+~inputScanQuiet  = false;
+
 SynthDef(\inputScan, {
     var n   = s.options.numInputBusChannels;
     var sig = SoundIn.ar((0 .. (n - 1)));
-    SendReply.kr(Impulse.kr(8), '/inLevels', Amplitude.kr(sig, 0.01, 0.2));
+    SendReply.kr(Impulse.kr(20), '/inLevels', Amplitude.kr(sig, 0.01, 0.2));
 }).add;
 
 ~inputScanStop = {
     ~inputScanSynth !? { ~inputScanSynth.free; ~inputScanSynth = nil };
-    OSCdef.all[\inLevels] !? { |d| d.free };
-    "input scan stopped. (~inputSummary.() still works)".postln;
-};
-
-// Peak seen per channel since the scan started. Mapping several jacks in one pass is far
-// easier from a table than from a scrolling log.
-~inputPeaks = ~inputPeaks ? Dictionary.new;
-~inputScanClear = { ~inputPeaks = Dictionary.new; "input scan: cleared.".postln };
-
-~inputSummary = {
-    var rows = ~inputPeaks.keys.asArray.sort;
-    "".postln;
-    "======== INPUTS THAT SAW SIGNAL ========".postln;
-    if (rows.isEmpty) {
-        "  nothing yet — play into a jack.".postln;
-    } {
-        "  SC index   peak     bar".postln;
-        rows.do { |ch|
-            var pk = ~inputPeaks[ch];
-            ("  " ++ ch.asString.padLeft(5) ++ "     " ++ pk.round(0.001).asString.padRight(7)
-                ++ "  " ++ String.fill((pk * 40).round.asInteger.clip(0, 40), $#)).postln;
-        };
-        "".postln;
-        "  Put these in ~trackInputs (config.scd). A stereo mic on two jacks".postln;
-        "  becomes ONE entry, e.g. [1, 2] — the pair need not be adjacent.".postln;
-    };
-    "========================================".postln;
-    "".postln;
+    [\inLevels, \inMap].do { |k| OSCdef.all[k] !? { |d| d.free } };
+    "input scan stopped.".postln;
 };
 
 ~inputScanStart = {
@@ -55,12 +44,9 @@ SynthDef(\inputScan, {
     OSCdef(\inLevels, { |msg|
         var levels = msg[3..];
         var peak   = levels.maxItem;
-        // only speak up when something is actually being played, so it isn't a firehose
-        if (peak > 0.01) {
-            var hot = levels.indexOf(peak);
-            ~inputPeaks[hot] = max(~inputPeaks[hot] ? 0, peak);
-            ("HOT -> SC input channel " ++ hot
-                ++ "   (levels: " ++ levels.collect(_.round(0.001)) ++ ")").postln;
+        if (~inputScanQuiet.not and: { peak > ~inputScanThresh }) {
+            ("HOT -> SC input channel " ++ levels.indexOf(peak)
+                ++ "   peak " ++ peak.round(0.001)).postln;
         };
     }, '/inLevels');
     fork {
@@ -68,14 +54,93 @@ SynthDef(\inputScan, {
         ~inputScanSynth = Synth(\inputScan, addAction: \addToTail);
         "".postln;
         "=== INPUT SCAN ===".postln;
-        ("scanning " ++ s.options.numInputBusChannels
-            ++ " input channels. Play into ONE H8 jack — the printed number is the").postln;
-        "index to put in ~trackInputs.   Stop with:  ~inputScanStop.()".postln;
+        ("scanning " ++ s.options.numInputBusChannels ++ " channels.").postln;
+        "Guided mapping:  ~mapInput.(\"mic\")   then  ~inputMapShow.()".postln;
+        "Stop with:       ~inputScanStop.()".postln;
     };
 };
 
-~inputScanStart.();
-)
+// ── Guided mapping ──────────────────────────────────────────
+~inputMap      = ~inputMap ? List.new;
+~inputMapClear = { ~inputMap = List.new; "input map cleared.".postln };
 
-// Note: this is a diagnostic, so it is deliberately NOT registered on ServerTree —
-// Ctrl+. removes the scanner synth and it stays gone. Re-load the file to scan again.
+~inputMapReport = { |name, peaks|
+    var order, p1, p2, p3, i1, i2, result = nil;
+    order = (0 .. (peaks.size - 1)).asArray.sort { |a, b| peaks[a] > peaks[b] };
+    i1 = order[0]; i2 = order[1];
+    p1 = peaks[i1]; p2 = peaks[i2]; p3 = peaks[order[2]];
+
+    "".postln;
+    ("  levels: " ++ order.keep(4).collect { |c| c.asString ++ ":" ++ peaks[c].round(0.001) }
+        .join("   ")).postln;
+
+    case
+    { p1 < 0.08 } {
+        ("  TOO QUIET (peak " ++ p1.round(0.001)
+            ++ ") — play louder, or raise the H8's gain, and try again.").postln;
+    }
+    // a stereo mic drives two channels together: both far above the rest, and within
+    // about 2:1 of each other
+    { (p2 > (p1 * 0.4)) and: { p3 < (p2 * 0.35) } } {
+        result = [i1, i2].sort;
+        ("  -> STEREO PAIR " ++ result ++ "   (two channels together, rest much quieter)")
+            .postln;
+    }
+    // one channel clearly dominant
+    { p2 < (p1 * 0.35) } {
+        result = i1;
+        ("  -> MONO channel " ++ i1).postln;
+    }
+    {
+        "  AMBIGUOUS — several channels are similarly loud. That usually means bleed".postln;
+        "  between H8 inputs. Play louder into just this jack, or turn the others down,".postln;
+        "  then run ~mapInput again.".postln;
+    };
+
+    result !? {
+        ~inputMap = ~inputMap.reject { |e| e[0] == name };   // remapping replaces
+        ~inputMap.add([name, result]);
+        ("  recorded '" ++ name ++ "' = " ++ result).postln;
+    };
+    "".postln;
+};
+
+~mapInput = { |name = "input", secs = 4|
+    var n, peaks;
+    if (~inputScanSynth.isNil) {
+        "~mapInput: run ~inputScanStart.() first (or re-load this file).".postln;
+    } {
+        n     = s.options.numInputBusChannels;
+        peaks = Array.fill(n, 0);
+        OSCdef(\inMap, { |msg|
+            msg[3..].do { |v, i| peaks[i] = max(peaks[i], v) };
+        }, '/inLevels');
+        fork {
+            ~inputScanQuiet = true;                 // don't bury the result in HOT lines
+            ("").postln;
+            (">>> PLAY INTO '" ++ name ++ "' NOW — listening for " ++ secs ++ "s").postln;
+            secs.wait;
+            OSCdef.all[\inMap] !? { |d| d.free };
+            ~inputScanQuiet = false;
+            ~inputMapReport.(name, peaks);
+        };
+    };
+};
+
+~inputMapShow = {
+    "".postln;
+    "======== INPUT MAP ========".postln;
+    if (~inputMap.isEmpty) {
+        "  nothing mapped yet — use ~mapInput.(\"name\")".postln;
+    } {
+        ~inputMap.do { |e| ("  " ++ e[0].asString.padRight(16) ++ e[1]).postln };
+        "".postln;
+        "  Paste into config.scd (order = track order):".postln;
+        ("    ~trackInputs = ["
+            ++ ~inputMap.collect { |e| e[1].asCompileString }.join(", ") ++ "];").postln;
+    };
+    "===========================".postln;
+    "".postln;
+};
+
+~inputScanStart.();
