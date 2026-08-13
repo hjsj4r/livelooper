@@ -8,7 +8,7 @@
 //  Run it headless (does NOT need the ZOOM H8 — boots the system default device):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/looper-test.scd
 //
-//  Expect: "29 passed, 0 failed".
+//  Expect: "33 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, t, bufBefore, framesAt2, gotFrames;
@@ -56,7 +56,7 @@ s.waitForBoot({
         bufBefore = t[\buf].bufnum;
 
         "".postln; "--- RECORD ---".postln;
-        ~trackMain.(t);                  // idle -> recording
+        ~trackRecord.(t);                  // idle -> recording
         ok.("state -> recording",        t[\state] == \recording);
         ok.("loop length matches tempo", t[\loopFrames] == framesAt2);
         ok.("NO reallocation on record", t[\buf].bufnum == bufBefore);
@@ -73,20 +73,38 @@ s.waitForBoot({
         ok.("server has the loop length", gotFrames == framesAt2);
 
         "".postln; "--- OVERDUB / CLEAR ---".postln;
-        ~trackMain.(t);                  // playing -> overdub
+        ~trackOverdub.(t);               // playing -> overdub
         ok.("state -> overdub",          t[\state] == \overdub);
-        ~trackMain.(t);                  // overdub -> playing
+        ~trackOverdub.(t);               // overdub -> playing
         ok.("state -> playing again",    t[\state] == \playing);
         ~trackClear.(t);
         ok.("state -> idle after clear", t[\state] == \idle);
         ok.("clear keeps the buffer",    t[\buf].notNil and: { t[\buf].bufnum == bufBefore });
+
+        // --- RECORD OVER A PLAYING LOOP ---
+        // The point of splitting record from overdub: punching in over a playing loop
+        // must NOT require clearing first, and must not be mistaken for an overdub.
+        "".postln; "--- RECORD OVER A PLAYING LOOP ---".postln;
+        ~cps = 2.0; ~lastCycle = 0; ~lastEventTime = Main.elapsedTime;
+        ~trackRecord.(t);
+        4.0.wait;
+        ok.("track is playing",           t[\state] == \playing);
+        ~trackRecord.(t);                 // punch in again, no clear
+        ok.("record over playing re-arms", t[\state] == \recording);
+        4.0.wait;
+        ok.("and returns to playing",     t[\state] == \playing);
+        // overdub on an EMPTY track must be a no-op, not a surprise recording
+        ~trackClear.(t);
+        0.2.wait;
+        ~trackOverdub.(t);
+        ok.("overdub on empty is ignored", t[\state] == \idle);
 
         "".postln; "--- TEMPO BELOW ~minCps ---".postln;
         // Slower than the buffer was sized for: the loop must clamp to the buffer rather
         // than run off the end, and say so. (A warning is expected here.)
         ~cps = ~minCps / 2;
         ~lastCycle = 0; ~lastEventTime = Main.elapsedTime;
-        ~trackMain.(t);
+        ~trackRecord.(t);
         ok.("clamped to buffer length",  t[\loopFrames] == t[\bufFrames]);
         ok.("did not exceed the buffer", t[\loopFrames] <= t[\bufFrames]);
         ~trackClear.(t);                 // cancel the pending take
@@ -103,9 +121,9 @@ s.waitForBoot({
         "".postln; "--- PHRASE ALIGNMENT ---".postln;
         ~cps = 2.0; ~lastCycle = 0; ~lastEventTime = Main.elapsedTime;
         ~trackClear.(~tracks[0]);
-        ~trackMain.(~tracks[0]);
+        ~trackRecord.(~tracks[0]);
         0.9.wait;                        // punch the second one in mid-phrase
-        ~trackMain.(~tracks[1]);
+        ~trackRecord.(~tracks[1]);
         0.2.wait;
         // The loops are punched in on DIFFERENT measures on purpose. They must still
         // stack, because the buffer is locked to the phrase grid: each one's start
@@ -140,7 +158,7 @@ s.waitForBoot({
         0.5.wait;
         ok.("reset returned to 0 after record", gotFrames == 0);
         ~trackClear.(~tracks[1]);
-        ~trackMain.(~tracks[1]);         // a SECOND record must still get a rising edge
+        ~trackRecord.(~tracks[1]);         // a SECOND record must still get a rising edge
         6.0.wait;
         gotFrames = nil;
         ~tracks[1][\synth].get(\reset, { |v| gotFrames = v });

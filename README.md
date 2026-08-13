@@ -101,6 +101,7 @@ sequence — map it rather than guessing:
 | `test/panic-test.scd`  | Regression test for Ctrl+. recovery (see below) |
 | `test/looper-test.scd` | Regression test for the record path + signal path |
 | `test/dashboard-test.scd` | Regression test for the dashboard message rate |
+| `test/stereo-test.scd` | Regression test for stereo (two-input) tracks |
 
 ## Roadmap
 
@@ -192,9 +193,10 @@ the system default device):
 ```powershell
 $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/panic-test.scd       # 25 passed
-& $sc -D d:/livelooper/test/looper-test.scd      # 29 passed
+& $sc -D d:/livelooper/test/looper-test.scd      # 33 passed
 & $sc -D d:/livelooper/test/dashboard-test.scd   # 17 passed
-& $sc -D d:/livelooper/test/midi-test.scd        # 17 passed
+& $sc -D d:/livelooper/test/midi-test.scd        # 19 passed
+& $sc -D d:/livelooper/test/stereo-test.scd      # 11 passed
 ```
 
 None of them needs the H8, and **they're safe to run while your rig is booted** — each
@@ -231,14 +233,21 @@ channel (mono/TS) so the audience never gets the click.
   there is no private monitor bus. Click hack: music mono-**LEFT**, click mono-**RIGHT**,
   feed the PA from Line Out with a **mono cable** (tip = left) so the audience gets the
   music without the click. (Fixed properly by a ≥4-out interface later.)
-- **AKAI MPK mini** — the looper control surface, MIDI channel 0. One pad per track,
-  no "focused track" mode:
+- **AKAI MPK mini** — the looper control surface, MIDI channel 0. Three fixed pads act on
+  the **selected** track, so the layout doesn't grow as you add tracks:
 
   | Control | Number | Does |
   |---|---|---|
-  | pads (top row) | 36, 37, 38 | record → overdub → play, tracks 0/1/2 |
-  | pads (bottom row) | 32, 33, 34 | clear, tracks 0/1/2 |
-  | knobs | CC 64, 65, 66 | track level, tracks 0/1/2 |
+  | pad 5 | 36 | **record** — a fresh take on the selected track |
+  | pad 6 | 37 | **overdub** — layer onto it / stop layering |
+  | pad 7 | 38 | **clear** — stop and clear it |
+  | knobs | CC 64, 65, 66… | track level, one per track |
+
+  Record and overdub are separate on purpose: record punches straight over a playing loop
+  without clearing first, which a single cycling button can't do. Overdub on an empty
+  track does nothing rather than quietly becoming a recording.
+
+  Select a track by clicking its strip in the dashboard.
 
   Pad notes **change with the PAD BANK button** (A = 16–23, B = 32–39). Stay on the bank
   you mapped, or re-run `tools/midi-monitor.scd` and update `config.scd`.

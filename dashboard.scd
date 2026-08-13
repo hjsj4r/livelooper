@@ -41,7 +41,8 @@ SynthDef(\preview2, { |buf = 0|
 // The bridge forwards browser commands as OSC to sclang on :57120.
 // Every one is .fix'ed — responders are freed by Ctrl+. otherwise, which would leave the
 // dashboard visibly connected but completely inert.
-OSCdef(\cmdTrackMain,  { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackMain.(t) } },  '/cmd/trackMain').fix;
+OSCdef(\cmdTrackRecord,  { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackRecord.(t) } },  '/cmd/trackRecord').fix;
+OSCdef(\cmdTrackOverdub, { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackOverdub.(t) } }, '/cmd/trackOverdub').fix;
 OSCdef(\cmdTrackClear, { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackClear.(t) } }, '/cmd/trackClear').fix;
 OSCdef(\cmdTrackLevel, { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackLevel.(t, msg[2].asFloat) } }, '/cmd/trackLevel').fix;
 OSCdef(\cmdFocus,      { |msg| ~focus = msg[1].asInteger }, '/cmd/focus').fix;
@@ -54,9 +55,10 @@ OSCdef(\cmdDirtLevel, { |msg|
     ~dirtFader !? { ~dirtFader.set(\level, ~dirtLevel) };
 }, '/cmd/dirtLevel').fix;
 
-// Track config (count + input per track) → dashboard builds the strips from this.
+// Track config → the dashboard builds its strips from this. Labels are strings, not
+// numbers, because a stereo track is fed by two inputs and reads as "0+1".
 ~sendTracks = {
-    ~dash.sendMsg('/tracksInit', ~tracks.size, *~tracks.collect({ |t| t[\input].asInteger }));
+    ~dash.sendMsg('/tracksInit', ~tracks.size, *~tracks.collect({ |t| ~inLabel.(t).asString }));
 };
 // A browser connecting mid-set needs the full picture at once, not on the next change.
 OSCdef(\cmdGetTracks, { |msg| ~sendTracks.(); ~sendState.(); ~sendLevels.(); ~sendClock.() },

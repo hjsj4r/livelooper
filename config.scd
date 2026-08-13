@@ -38,14 +38,22 @@
 
 
 // ── Loopers ─────────────────────────────────────────────────
-// One track per SC input index. Order = track order and dashboard strip order, so
-// APPEND when adding — inserting renumbers tracks and moves the pedal focus.
+// One entry per track. Order = track order and dashboard strip order, so APPEND when
+// adding — inserting renumbers tracks and moves the selection under your fingers.
 //
-// The H8's ASIO channel order is NOT a simple sequence, so never assume it: map a jack
-// to an index with tools/input-scan.scd. Verified on this H8:
+//   5        a mono jack on SC input 5
+//   [0, 1]   a STEREO pair — one track fed by two inputs, e.g. a stereo mic.
+//            The pair does not have to be adjacent.
+//
+// The H8's ASIO channel order is NOT a simple sequence, so never assume it: map every
+// jack with tools/input-scan.scd (tap each one, then ~inputSummary.()).
+// Verified so far on this H8:
 //     SC 5 = H8 input 2
 //     SC 8 = H8 "Input A"        (earlier note; re-scan if it ever misbehaves)
 //     SC 9 = extra instrument
+//
+// TODO: replace with the full map once every jack is scanned. A stereo mic on H8
+// inputs 1+2 becomes a single entry, e.g.  [[micL, micR], in3, in4, in5, in6]
 ~trackInputs   = [9, 8, 5];
 
 ~numLoopCycles = 4;          // record length, in Tidal cycles
@@ -78,13 +86,20 @@
 // so with ~midiChan = 0 it is inert here and stays purely an instrument.
 ~midiChan = 0;
 
-// One entry per track, IN TRACK ORDER. Pads are note numbers, knobs are CC numbers.
 // Captured with tools/midi-monitor.scd — re-run it if you move the MPK's PAD BANK
 // button, because the pads send different notes per bank.
 //   bank A = notes 16..23      bank B = notes 32..39 (fixed velocity 127)
-~padMain   = [36, 37, 38];   // record -> overdub -> play, one pad per track
-~padClear  = [32, 33, 34];   // clear, one pad per track
-~knobFader = [64, 65, 66];   // track level, one knob per track
+//
+// These three act on the SELECTED track (~focus), so they scale to any number of tracks.
+// Record and overdub are separate on purpose: record punches a fresh take over a playing
+// loop without clearing it first, which a single cycling button cannot do.
+~padRecord  = 36;            // pad 5 — start a fresh take on the selected track
+~padOverdub = 37;            // pad 6 — layer onto it / stop layering
+~padClear   = 38;            // pad 7 — stop and clear it
+
+// Track level, one knob per track, in track order. Extend as you add tracks — the MPK
+// has 8 knobs: CC 48, 49, 50, 51, 64, 65, 66, 67.
+~knobFader = [64, 65, 66];
 
 // Toggles the click. nil = no MIDI control (use the dashboard button, or ~clickOn).
 // Only ever put a PAD number here: on channel 0 the MPK's KEYBOARD sends notes too, and

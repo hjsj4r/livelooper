@@ -57,7 +57,11 @@
 // ONE Phasor drives both read (BufRd) and write (BufWr): the record head can never
 // drift from the play head, so overdub layers in place with no reset. reset snaps the
 // phase to 0 to align the loop start to the grid. level = the track's mixer fader.
-SynthDef(\guitarLooper, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
+// Two defs, because BufRd/BufWr channel counts are fixed when the SynthDef is built.
+// A mono jack gets \looperMono; a stereo pair (a stereo mic on two H8 inputs) gets
+// \looperStereo. The two channels are separate ir controls rather than chan/chan+1, so
+// a pair does not have to be adjacent — the H8's ASIO order is not a sequence.
+SynthDef(\looperMono, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
         recRun = 0, playing = 0, reset = 0, level = 1.0|
     var inChan = \inChan.ir(0);
     // Loop length is a CONTROL, not the buffer's size. The buffer is allocated once at
@@ -83,6 +87,21 @@ SynthDef(\guitarLooper, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
     Out.ar(0, out ! 2);
 }).add;
 
+// Same signal path, two channels through. No `! 2` at the end: the loop is already
+// stereo, so widening would collapse it.
+SynthDef(\looperStereo, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
+        recRun = 0, playing = 0, reset = 0, level = 1.0|
+    var frames = \loopFrames.kr(44100);
+    var dry    = SoundIn.ar([\inChanL.ir(0), \inChanR.ir(1)]);
+    var phase  = Phasor.ar(K2A.ar(reset), BufRateScale.kr(bufnum), 0, frames,
+        \resetPos.kr(0));
+    var old    = BufRd.ar(2, bufnum, phase, loop: 1, interpolation: 1);
+    var wsig   = (dry * (recRun * recLevel)) + (old * preLevel);
+    var out    = ((old * playing) + (dry * monLevel)) * level;
+    BufWr.ar(wsig, bufnum, phase, loop: 1);
+    Out.ar(0, out);
+}).add;
+
 // Frames needed for a ~numLoopCycles loop at a given tempo.
 ~loopFramesFor = { |cps|
     ((s.sampleRate ?? { s.options.sampleRate ? 44100 }) * ~numLoopCycles / cps).round.asInteger
@@ -105,12 +124,16 @@ SynthDef(\guitarLooper, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
     t[\synth] !? { t[\synth].free };
     t[\buf]   !? { t[\buf].free };
 } };
-~tracks = ~trackInputs.collect { |ch, i|
-    (idx: i, input: ch, state: \idle, buf: nil, synth: nil, gen: 0, level: 1.0, startCycle: 0)
+// inputs is ALWAYS a list, so mono and stereo tracks have the same shape everywhere
+// downstream; only the SynthDef and the buffer's channel count differ.
+~tracks = ~trackInputs.collect { |spec, i|
+    (idx: i, inputs: spec.asArray, state: \idle, buf: nil, synth: nil,
+        gen: 0, level: 1.0, startCycle: 0)
 };
 
 // ── Per-track actions ───────────────────────────────────────
-~tlabel = { |t| "[t" ++ t[\idx] ++ " in" ++ t[\input] ++ "]" };
+~inLabel = { |t| t[\inputs].join("+") };
+~tlabel  = { |t| "[t" ++ t[\idx] ++ " in" ++ ~inLabel.(t) ++ "]" };
 
 // Cycle-quantized record → auto-play after ~numLoopCycles. Cancelable via gen.
 ~startRecording = { |t|
@@ -184,10 +207,19 @@ SynthDef(\guitarLooper, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
     });
 };
 
-// Main action: idle → record, playing → overdub, overdub → play.
-~trackMain = { |t|
+// RECORD and OVERDUB are separate actions, not one cycling button.
+//
+// Record starts a fresh take from ANY state, so you can punch straight over a playing
+// loop without clearing it first — the old loop keeps sounding right up to the punch-in
+// point, then the new take begins. ~startRecording bumps the generation token, which
+// cancels anything the previous take had scheduled.
+~trackRecord = { |t| ~startRecording.(t) };
+
+// Overdub layers onto a loop that already exists, and toggles back off. It deliberately
+// does nothing on an empty track: that is what record is for, and silently turning an
+// overdub press into a recording would be a nasty surprise mid-set.
+~trackOverdub = { |t|
     switch (t[\state],
-        \idle,    { ~startRecording.(t) },
         \playing, {
             t[\synth].set(\recRun, 1, \recLevel, 1, \preLevel, 1, \playing, 1);
             t[\state] = \overdub;
@@ -197,7 +229,8 @@ SynthDef(\guitarLooper, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
             t[\synth].set(\recRun, 0, \recLevel, 0, \preLevel, 1, \playing, 1);
             t[\state] = \playing;
             (~tlabel.(t) ++ " PLAYING").postln;
-        }
+        },
+        { (~tlabel.(t) ++ " overdub ignored — nothing recorded yet").postln }
     );
 };
 
@@ -264,10 +297,14 @@ SynthDef(\guitarLooper, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
     ~tracks.do { |t|
         t[\state] = \idle;
         t[\buf] !? {
-            t[\synth] = Synth(\guitarLooper, [
-                bufnum: t[\buf], inChan: t[\input], loopFrames: t[\loopFrames],
-                recLevel: 0, preLevel: 1, monLevel: ~monLevel, recRun: 0, playing: 0, level: t[\level]
-            ]);
+            var ins  = t[\inputs];
+            var args = [bufnum: t[\buf], loopFrames: t[\loopFrames], recLevel: 0,
+                preLevel: 1, monLevel: ~monLevel, recRun: 0, playing: 0, level: t[\level]];
+            t[\synth] = if (ins.size >= 2) {
+                Synth(\looperStereo, args ++ [inChanL: ins[0], inChanR: ins[1]]);
+            } {
+                Synth(\looperMono, args ++ [inChan: ins[0]]);
+            };
         };
     };
     if (~restoreLoopsOnPanic) {
@@ -295,18 +332,22 @@ ServerQuit.add(~forgetTracks, s);
 // Buffers are allocated ONCE here, mono, at the length the slowest supported tempo
 // (~minCps) needs. Recording then never allocates — it only moves \loopFrames.
 fork {
-    var maxFrames, mb;
+    var maxFrames, mb, chans;
     s.sync;
     maxFrames = ~loopFramesFor.(~minCps);
+    chans     = 0;
     ~tracks.do { |t|
-        t[\buf]        = Buffer.alloc(s, maxFrames, 1);
+        var nch = t[\inputs].size.clip(1, 2);      // stereo costs twice the buffer
+        chans          = chans + nch;
+        t[\buf]        = Buffer.alloc(s, maxFrames, nch);
         t[\bufFrames]  = maxFrames;
         t[\loopFrames] = ~loopFramesFor.(~cps).min(maxFrames);
     };
     s.sync;
     ~buildTracks.value;
-    mb = (maxFrames * 4 * ~tracks.size / 1e6).round(0.1);
-    ("Multitrack ready: " ++ ~tracks.size ++ " tracks on inputs " ++ ~trackInputs
+    mb = (maxFrames * 4 * chans / 1e6).round(0.1);
+    ("Multitrack ready: " ++ ~tracks.size ++ " tracks ("
+        ++ ~tracks.collect({ |t| ~inLabel.(t) }).join(", ") ++ ")"
         ++ " | " ++ (maxFrames / (s.sampleRate ? 44100)).round(0.1) ++ "s max loop, "
         ++ mb ++ " MB total").postln;
 };
@@ -347,17 +388,18 @@ MIDIdef.cc(\midiCcPrint, { |val, num, chan, src|
 // keys would silently start and clear recordings.
 MIDIdef.all[\looperPedal] !? { |d| d.free };
 
-// Pads address tracks DIRECTLY — one pad per track, no "which track is armed?" mode.
+// Three pads, one job each, always acting on the SELECTED track (~focus, set from the
+// dashboard or the controller). Three fixed pads scale to any number of tracks, where a
+// pad per track does not — and separating record from overdub is what lets you punch a
+// new take over a playing loop without clearing it first.
 // .fix keeps them alive through Ctrl+.; without it a panic stop leaves you with no way
 // to drive the loopers until you re-evaluate the file.
-//
-// indexOf is safe on these: they hold Integers, which SuperCollider compares by value.
-// (Strings are the exception — see the device check in startup.scd, where indexOf's
-// identity comparison silently rejected a device that was present.)
 MIDIdef.noteOn(\looperPads, { |vel, note, chan|
     if (chan == ~midiChan) {
-        ~padMain  !? { |m| m.indexOf(note) !? { |i| ~tracks[i] !? { |t| ~trackMain.(t) } } };
-        ~padClear !? { |m| m.indexOf(note) !? { |i| ~tracks[i] !? { |t| ~trackClear.(t) } } };
+        var t = ~tracks[(~focus ? 0).clip(0, ~tracks.size - 1)];
+        if (note == ~padRecord)  { ~trackRecord.(t) };
+        if (note == ~padOverdub) { ~trackOverdub.(t) };
+        if (note == ~padClear)   { ~trackClear.(t) };
     };
 }).fix;
 
@@ -372,7 +414,8 @@ MIDIdef.cc(\looperKnobs, { |val, num, chan|
     };
 }).fix;
 
-("=== looper.scd loaded — " ++ ~trackInputs.size ++ " tracks on inputs " ++ ~trackInputs
+("=== looper.scd loaded — " ++ ~trackInputs.size ++ " tracks"
     ++ " | MIDI ch " ++ ~midiChan
-    ++ " | main " ++ ~padMain ++ " clear " ++ ~padClear ++ " fader cc " ++ ~knobFader
+    ++ " | rec " ++ ~padRecord ++ " dub " ++ ~padOverdub ++ " clr " ++ ~padClear
+    ++ " | fader cc " ++ ~knobFader
     ++ " ===").postln;

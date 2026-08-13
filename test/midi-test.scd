@@ -1,12 +1,12 @@
 // ============================================================
 //  LIVE LOOPER · midi-test.scd
-//  The MPK mini control surface: one pad per track, no focus mode.
+//  The MPK mini control surface: three fixed pads acting on the SELECTED track.
 //  Also checks what must NOT respond — the MPK's keyboard and the SPD-SX.
 //
 //  Run it headless (no MIDI hardware needed — MIDI input is simulated):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/midi-test.scd
 //
-//  Expect: "17 passed, 0 failed".
+//  Expect: "19 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, hit;
@@ -41,27 +41,34 @@ s.waitForBoot({
 
         "".postln; "--- MAP ---".postln;
         ok.("channel is the MPK's",   ~midiChan == 0);
-        ok.("3 main pads",            ~padMain.size == ~tracks.size);
-        ok.("3 clear pads",           ~padClear.size == ~tracks.size);
-        ok.("3 fader knobs",          ~knobFader.size == ~tracks.size);
+        ok.("record pad is a number", ~padRecord.isNumber);
+        ok.("overdub pad is a number", ~padOverdub.isNumber);
+        ok.("clear pad is a number",  ~padClear.isNumber);
+        ok.("rec/dub/clr are distinct",
+            [~padRecord, ~padOverdub, ~padClear].asSet.size == 3);
 
-        "".postln; "--- PADS DRIVE THEIR OWN TRACK ---".postln;
-        hit.(0, ~padMain[1]);                       // pad 37 -> track 1 only
+        "".postln; "--- PADS ACT ON THE SELECTED TRACK ---".postln;
+        ~focus = 1;
+        hit.(0, ~padRecord);
         0.3.wait;
-        ok.("main pad armed track 1",  ~tracks[1][\state] == \recording);
-        ok.("track 0 untouched",       ~tracks[0][\state] == \idle);
-        ok.("track 2 untouched",       ~tracks[2][\state] == \idle);
+        ok.("record hit the selected track", ~tracks[1][\state] == \recording);
+        ok.("track 0 untouched",             ~tracks[0][\state] == \idle);
+        ok.("track 2 untouched",             ~tracks[2][\state] == \idle);
 
-        hit.(0, ~padMain[2]);                       // pad 38 -> track 2
+        // move the selection; the same pad must now drive a different track
+        ~focus = 2;
+        hit.(0, ~padRecord);
         0.3.wait;
-        ok.("main pad armed track 2",  ~tracks[2][\state] == \recording);
+        ok.("selection redirects the pad",   ~tracks[2][\state] == \recording);
+        ok.("track 1 still recording",       ~tracks[1][\state] == \recording);
 
-        hit.(0, ~padClear[1]);                      // pad 33 -> clear track 1
+        hit.(0, ~padClear);
         0.3.wait;
-        ok.("clear pad cleared track 1", ~tracks[1][\state] == \idle);
-        ok.("clear left track 2 alone",  ~tracks[2][\state] == \recording);
-        hit.(0, ~padClear[2]);
+        ok.("clear hit the selected track",  ~tracks[2][\state] == \idle);
+        ok.("clear left track 1 alone",      ~tracks[1][\state] == \recording);
+        ~focus = 1; hit.(0, ~padClear);
         0.3.wait;
+        ~focus = 0;
 
         "".postln; "--- KNOBS ---".postln;
         MIDIIn.doControlAction(999, 0, ~knobFader[0], 0);
@@ -82,7 +89,7 @@ s.waitForBoot({
         0.3.wait;
         ok.("keyboard notes do nothing", ~tracks.every { |t| t[\state] == \idle });
         // the SPD-SX is on channel 9 and must stay a pure instrument
-        hit.(9, ~padMain[0]); hit.(9, 60);
+        hit.(9, ~padRecord); hit.(9, 60);
         0.3.wait;
         ok.("SPD (ch 9) does nothing",  ~tracks.every { |t| t[\state] == \idle });
         ok.("old focus handler is gone", MIDIdef.all[\looperPedal].isNil);

@@ -21,7 +21,33 @@ SynthDef(\inputScan, {
 ~inputScanStop = {
     ~inputScanSynth !? { ~inputScanSynth.free; ~inputScanSynth = nil };
     OSCdef.all[\inLevels] !? { |d| d.free };
-    "input scan stopped.".postln;
+    "input scan stopped. (~inputSummary.() still works)".postln;
+};
+
+// Peak seen per channel since the scan started. Mapping several jacks in one pass is far
+// easier from a table than from a scrolling log.
+~inputPeaks = ~inputPeaks ? Dictionary.new;
+~inputScanClear = { ~inputPeaks = Dictionary.new; "input scan: cleared.".postln };
+
+~inputSummary = {
+    var rows = ~inputPeaks.keys.asArray.sort;
+    "".postln;
+    "======== INPUTS THAT SAW SIGNAL ========".postln;
+    if (rows.isEmpty) {
+        "  nothing yet — play into a jack.".postln;
+    } {
+        "  SC index   peak     bar".postln;
+        rows.do { |ch|
+            var pk = ~inputPeaks[ch];
+            ("  " ++ ch.asString.padLeft(5) ++ "     " ++ pk.round(0.001).asString.padRight(7)
+                ++ "  " ++ String.fill((pk * 40).round.asInteger.clip(0, 40), $#)).postln;
+        };
+        "".postln;
+        "  Put these in ~trackInputs (config.scd). A stereo mic on two jacks".postln;
+        "  becomes ONE entry, e.g. [1, 2] — the pair need not be adjacent.".postln;
+    };
+    "========================================".postln;
+    "".postln;
 };
 
 ~inputScanStart = {
@@ -31,7 +57,9 @@ SynthDef(\inputScan, {
         var peak   = levels.maxItem;
         // only speak up when something is actually being played, so it isn't a firehose
         if (peak > 0.01) {
-            ("HOT -> SC input channel " ++ levels.indexOf(peak)
+            var hot = levels.indexOf(peak);
+            ~inputPeaks[hot] = max(~inputPeaks[hot] ? 0, peak);
+            ("HOT -> SC input channel " ++ hot
                 ++ "   (levels: " ++ levels.collect(_.round(0.001)) ++ ")").postln;
         };
     }, '/inLevels');
