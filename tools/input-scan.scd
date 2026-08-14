@@ -64,8 +64,21 @@ SynthDef(\inputScan, {
 // ── Passes ──────────────────────────────────────────────────
 // Each pass is [name, peaksPerChannel]. No verdict here — a pass means nothing until
 // there is another to compare it with.
-~inputPasses     = ~inputPasses ? List.new;
-~inputMapClear   = { ~inputPasses = List.new; "input passes cleared.".postln };
+~inputPasses     = ~inputPasses ? [];
+~inputMapClear   = { ~inputPasses = []; "input passes cleared.".postln };
+
+// Adding a pass is its own function so it can be tested without live audio — and
+// because getting it wrong silently loses passes.
+//
+// NOTE the reassignment. `x.add(y)` on an Array mutates in place only while there is
+// spare capacity; once full it returns a NEW array and leaves the original alone. The
+// earlier version did `~inputPasses.add(...)` without assigning, so every pass past the
+// fourth vanished while still reporting success. `++` always returns a new array, so
+// assigning the result is the only correct form.
+~inputAddPass = { |name, peaks|
+    ~inputPasses = ~inputPasses.reject { |e| e[0] == name }.asArray ++ [[name, peaks]];
+    ~inputPasses.size;
+};
 
 ~mapInput = { |name = "input", secs = 4|
     var peaks;
@@ -87,8 +100,7 @@ SynthDef(\inputScan, {
                 ("  TOO QUIET (peak " ++ peaks.maxItem.round(0.001)
                     ++ ") — play louder or raise the H8's gain, then run it again.").postln;
             } {
-                ~inputPasses = ~inputPasses.reject { |e| e[0] == name };
-                ~inputPasses.add([name, peaks]);
+                ~inputAddPass.(name, peaks);
                 ("  recorded '" ++ name ++ "': "
                     ++ (0 .. (peaks.size - 1)).asArray
                         .sort { |a, b| peaks[a] > peaks[b] }.keep(5)
