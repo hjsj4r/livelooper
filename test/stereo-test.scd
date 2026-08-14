@@ -7,7 +7,7 @@
 //  Run it headless (no ZOOM H8 needed):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/stereo-test.scd
 //
-//  Expect: "11 passed, 0 failed".
+//  Expect: "12 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, st, mo;
@@ -28,8 +28,10 @@ s.waitForBoot({
     fork {
         1.0.wait;
         "D:/livelooper/config.scd".load;
-        // one stereo track (a pair, deliberately NON-adjacent) plus two mono ones
+        // one stereo track (a pair, deliberately NON-adjacent) plus two mono ones.
+        // Names must be overridden too — config's list is sized for the real rig.
         ~trackInputs = [[4, 7], 5, 9];
+        ~trackNames  = ["pair", "monoA", "monoB"];
         ~dirtPort = NetAddr.langPort;
         ~dirt = SuperDirt(2, s);
         ~dirt.start(~dirtPort, [0, 0]);
@@ -47,6 +49,7 @@ s.waitForBoot({
         ok.("mono buffer is 1 channel",    mo[\buf].numChannels == 1);
         ok.("stereo label reads as a pair", ~inLabel.(st) == "4+7");
         ok.("mono label is a single index", ~inLabel.(mo) == "5");
+        ok.("tracks carry their names",     st[\name] == "pair" and: { mo[\name] == "monoA" });
         ok.("both synths exist",           st[\synth].notNil and: { mo[\synth].notNil });
 
         "".postln; "--- STEREO IS NOT SUMMED ---".postln;

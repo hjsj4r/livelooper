@@ -52,9 +52,14 @@
 //     SC 8 = H8 "Input A"        (earlier note; re-scan if it ever misbehaves)
 //     SC 9 = extra instrument
 //
-// TODO: replace with the full map once every jack is scanned. A stereo mic on H8
-// inputs 1+2 becomes a single entry, e.g.  [[micL, micR], in3, in4, in5, in6]
-~trackInputs   = [9, 8, 5];
+// Mapped with tools/input-scan.scd. SC 10 and 11 carry the H8's MIX (they light up for
+// every source), so they are deliberately not tracks — 2 and 3 were unused.
+~trackInputs   = [[0, 1], 5, 9, 7, 8, 4, 6];
+
+// Display names, in the same order. Shown on the dashboard strips and in the post
+// window. tools/input-scan.scd prints this line alongside ~trackInputs so the two
+// cannot drift apart. A missing name falls back to "Track N".
+~trackNames    = ["mic", "bass", "synth", "voice", "spdsx", "bomboclat", "overhead"];
 
 ~numLoopCycles = 4;          // record length, in Tidal cycles
 
@@ -97,9 +102,10 @@
 ~padOverdub = 37;            // pad 6 — layer onto it / stop layering
 ~padClear   = 38;            // pad 7 — stop and clear it
 
-// Track level, one knob per track, in track order. Extend as you add tracks — the MPK
-// has 8 knobs: CC 48, 49, 50, 51, 64, 65, 66, 67.
-~knobFader = [64, 65, 66];
+// Track level, one knob per track, in track order. The MPK's 8 knobs are CC 48, 49, 50,
+// 51, 64, 65, 66, 67 — assumed to run left-to-right in that order. If a knob moves the
+// wrong track, check the real order with tools/midi-monitor.scd and reorder this list.
+~knobFader = [48, 49, 50, 51, 64, 65, 66];
 
 // Toggles the click. nil = no MIDI control (use the dashboard button, or ~clickOn).
 // Only ever put a PAD number here: on channel 0 the MPK's KEYBOARD sends notes too, and

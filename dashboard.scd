@@ -55,10 +55,12 @@ OSCdef(\cmdDirtLevel, { |msg|
     ~dirtFader !? { ~dirtFader.set(\level, ~dirtLevel) };
 }, '/cmd/dirtLevel').fix;
 
-// Track config → the dashboard builds its strips from this. Labels are strings, not
-// numbers, because a stereo track is fed by two inputs and reads as "0+1".
+// Track config → the dashboard builds its strips from this. Sent as name/input PAIRS so
+// the two can't drift out of alignment, and as strings because a stereo track is fed by
+// two inputs and reads as "0+1".
 ~sendTracks = {
-    ~dash.sendMsg('/tracksInit', ~tracks.size, *~tracks.collect({ |t| ~inLabel.(t).asString }));
+    ~dash.sendMsg('/tracksInit', ~tracks.size,
+        *~tracks.collect({ |t| [t[\name].asString, ~inLabel.(t).asString] }).flatten);
 };
 // A browser connecting mid-set needs the full picture at once, not on the next change.
 OSCdef(\cmdGetTracks, { |msg| ~sendTracks.(); ~sendState.(); ~sendLevels.(); ~sendClock.() },

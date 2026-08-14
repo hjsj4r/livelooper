@@ -34,6 +34,10 @@ s.waitForBoot({
     fork {
         1.0.wait;
         "D:/livelooper/config.scd".load;
+        // Pin a known all-mono layout so this suite doesn't move when the rig's input
+        // map does. Stereo tracks have their own suite.
+        ~trackInputs = [9, 8, 5];
+        ~trackNames  = ["a", "b", "c"];
 
         // looper.scd tracks tempo through ~dirt.receiveAction, so SuperDirt has to be
         // here. Build it WITHOUT loadSoundFiles — the sample library costs ~450 MB and

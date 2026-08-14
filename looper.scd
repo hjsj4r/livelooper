@@ -127,13 +127,22 @@ SynthDef(\looperStereo, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
 // inputs is ALWAYS a list, so mono and stereo tracks have the same shape everywhere
 // downstream; only the SynthDef and the buffer's channel count differ.
 ~tracks = ~trackInputs.collect { |spec, i|
-    (idx: i, inputs: spec.asArray, state: \idle, buf: nil, synth: nil,
+    (idx: i,
+        name: (~trackNames !? { ~trackNames[i] }) ?? { "Track " ++ i },
+        inputs: spec.asArray, state: \idle, buf: nil, synth: nil,
         gen: 0, level: 1.0, startCycle: 0)
+};
+if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
+    ("config.scd: ~trackNames has " ++ ~trackNames.size ++ " entries but ~trackInputs has "
+        ++ ~trackInputs.size ++ " — unnamed tracks fall back to \"Track N\".").warn;
 };
 
 // ── Per-track actions ───────────────────────────────────────
 ~inLabel = { |t| t[\inputs].join("+") };
-~tlabel  = { |t| "[t" ++ t[\idx] ++ " in" ++ ~inLabel.(t) ++ "]" };
+// Name rather than input index: "[t4 spdsx]" says far more at a glance mid-set than
+// "[t4 in8]". The index stays because it is how you reach the track from the
+// interpreter (~tracks[4]).
+~tlabel  = { |t| "[t" ++ t[\idx] ++ " " ++ t[\name] ++ "]" };
 
 // Cycle-quantized record → auto-play after ~numLoopCycles. Cancelable via gen.
 ~startRecording = { |t|
@@ -347,7 +356,7 @@ fork {
     ~buildTracks.value;
     mb = (maxFrames * 4 * chans / 1e6).round(0.1);
     ("Multitrack ready: " ++ ~tracks.size ++ " tracks ("
-        ++ ~tracks.collect({ |t| ~inLabel.(t) }).join(", ") ++ ")"
+        ++ ~tracks.collect({ |t| t[\name] ++ "=" ++ ~inLabel.(t) }).join(", ") ++ ")"
         ++ " | " ++ (maxFrames / (s.sampleRate ? 44100)).round(0.1) ++ "s max loop, "
         ++ mb ++ " MB total").postln;
 };

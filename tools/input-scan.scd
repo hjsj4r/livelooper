@@ -148,18 +148,18 @@ SynthDef(\inputScan, {
             { mine.size == 1 } { spec = mine[0] }
             { mine.size == 2 } { spec = mine.sort }
             { mine.size == 0 } {
-                ("  " ++ name.asString.padRight(14) ++ "NO exclusive channel — this source"
+                ("  " ++ name.asString.padRight(18) ++ "NO exclusive channel — this source"
                     ++ " only showed up on shared/mix channels.").postln;
                 "                Is its own input muted or unplugged?".postln;
             }
             {
-                ("  " ++ name.asString.padRight(14) ++ mine.size
+                ("  " ++ name.asString.padRight(18) ++ mine.size
                     ++ " exclusive channels " ++ mine ++ " — expected 1 (mono) or 2 (stereo).")
                     .postln;
                 "                Pick the ones you want by hand.".postln;
             };
             spec !? {
-                ("  " ++ name.asString.padRight(14) ++ spec.asCompileString
+                ("  " ++ name.asString.padRight(18) ++ spec.asCompileString
                     ++ if (spec.isArray) { "   (stereo pair)" } { "   (mono)" }
                     ++ if (shared.notEmpty) { "   [also on shared " ++ shared ++ "]" } { "" }
                 ).postln;
@@ -169,9 +169,12 @@ SynthDef(\inputScan, {
 
         if (results.every(_.notNil)) {
             "".postln;
-            "  Paste into config.scd (order = track order):".postln;
-            ("    ~trackInputs = ["
+            "  Paste BOTH into config.scd (order = track order):".postln;
+            ("    ~trackInputs   = ["
                 ++ results.collect { |r| r.asCompileString }.join(", ") ++ "];").postln;
+            ("    ~trackNames    = ["
+                ++ ~inputPasses.collect { |e| e[0].asString.asCompileString }.join(", ")
+                ++ "];").postln;
         } {
             "".postln;
             "  Fix the unresolved sources above, then run ~inputMapShow.() again.".postln;

@@ -31,6 +31,11 @@ s.waitForBoot({
     fork {
         1.0.wait;
         "D:/livelooper/config.scd".load;
+        // Pin a known all-mono layout. This suite tests the mono record path and fills
+        // buffers assuming mono framing, so it must not depend on the rig's real input
+        // map — which now leads with a STEREO mic. Stereo has its own suite.
+        ~trackInputs = [9, 8, 5];
+        ~trackNames  = ["a", "b", "c"];
         // SuperDirt without its sample library — none of it matters here.
         ~dirtPort = NetAddr.langPort;
         ~dirt = SuperDirt(2, s);

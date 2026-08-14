@@ -6,12 +6,12 @@
 //  Run it headless (does NOT need the ZOOM H8 — boots the system default device):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/dashboard-test.scd
 //
-//  Expect: "17 passed, 0 failed".
+//  Expect: "21 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok;
 var clocks = 0, states = 0, legacy = 0, levels = 0;
-var lastCps, lastPhase, lastDiv, lastState, lastLevels, window = 4.0;
+var lastCps, lastPhase, lastDiv, lastState, lastLevels, lastInit, window = 4.0;
 
 ok = { |label, cond|
     if (cond) { pass = pass + 1; ("  PASS  " ++ label).postln }
@@ -44,6 +44,7 @@ s.waitForBoot({
         }, '/clock');
         OSCdef(\dtState,  { |msg| states = states + 1; lastState  = msg }, '/state');
         OSCdef(\dtLevels, { |msg| levels = levels + 1; lastLevels = msg }, '/levels');
+        OSCdef(\dtInit,   { |msg| lastInit = msg }, '/tracksInit');
         // the retired chatty addresses must not come back
         OSCdef(\dtLegacyA, { |msg| legacy = legacy + 1 }, '/tick');
         OSCdef(\dtLegacyB, { |msg| legacy = legacy + 1 }, '/trackStates');
@@ -98,6 +99,20 @@ s.waitForBoot({
         levels = 0;
         2.0.wait;
         ok.("no /levels churn when still",  levels == 0);
+
+        "".postln; "--- TRACK NAMES ---".postln;
+        // /tracksInit carries name/input PAIRS, so a missing value can't shift every
+        // following label onto the wrong strip
+        ~sendTracks.();
+        0.3.wait;
+        ok.("tracksInit sends name+input pairs",
+            lastInit.notNil and: { lastInit.size == (2 + (~tracks.size * 2)) });
+        ok.("first pair carries track 0's name",
+            lastInit[2].asString == ~tracks[0][\name].asString);
+        ok.("and its input label",
+            lastInit[3].asString == ~inLabel.(~tracks[0]).asString);
+        ok.("last pair carries the last track's name",
+            lastInit[lastInit.size - 2].asString == ~tracks.last[\name].asString);
 
         "".postln;
         ("======== " ++ pass ++ " passed, " ++ fail ++ " failed ========").postln;
