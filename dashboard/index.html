@@ -39,7 +39,14 @@
   /* tracks */
   .tracks { display: flex; flex-direction: column; gap: 10px; }
   .track { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; row-gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  /* focus = the SELECTED track, what the pads and triggers act on */
   .track.focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  /* cursor = where the stick/d-pad is pointing; commit it with Cross */
+  .track.cursor { border-color: var(--dub); }
+  .track.cursor::before {
+    content: '▸'; position: absolute; margin-left: -18px; color: var(--dub); font-size: 15px;
+  }
+  .track { position: relative; }
   .track-id { width: 148px; flex-shrink: 0; cursor: pointer; }
   /* names are user-chosen and can be long ("drums-bomboclat"); clip rather than let a
      long one push the transport buttons off the row. Full name is in the title attr. */
@@ -179,9 +186,14 @@ function updateTracks(states) {
     el.querySelector('.dub').textContent = DUB_LABEL[st] || '＋ Dub';
   });
 }
-function setFocus(idx) {
+let cursorIdx = 0;
+function setFocus(idx, cur) {
   focusIdx = idx;
-  [...$('tracks').children].forEach((el, i) => el.classList.toggle('focus', i === idx));
+  if (cur !== undefined) cursorIdx = cur;
+  [...$('tracks').children].forEach((el, i) => {
+    el.classList.toggle('focus', i === focusIdx);
+    el.classList.toggle('cursor', i === cursorIdx);
+  });
 }
 
 // Fader positions pushed from SC — a hardware knob on the MPK moves these.
@@ -238,9 +250,70 @@ function frame() {
     if (p < 0) p += 1;
     renderMetro(p, clock.div);
   }
+  pollGamepad();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// ---- DualSense ----
+// SuperCollider cannot read this controller: Windows reserves HID top-level collections
+// on the Generic Desktop usage page, which covers every gamepad, so HID.open fails. The
+// browser's Gamepad API has no such restriction, and the OSC bridge is already here.
+//
+// NOTE: polling rides on requestAnimationFrame, so this window must stay VISIBLE. A
+// minimised window or hidden tab is throttled to ~1 Hz by the browser and the controller
+// will feel dead. Unfocused but visible is fine.
+//
+// Indices are the W3C "standard gamepad" mapping, which Chrome/Edge apply to a DualSense.
+const PAD = {
+  select:  0,    // Cross
+  clickTg: 3,    // Triangle — toggles the metronome
+  overdub: 5,    // R1
+  clear:   6,    // L2
+  record:  7,    // R2
+  dpadUp: 12, dpadDown: 13, dpadLeft: 14, dpadRight: 15,
+};
+const AXIS_X = 0, AXIS_Y = 1;        // left stick
+const AXIS_ON = 0.5, AXIS_OFF = 0.3; // hysteresis: must fall back below OFF to re-fire
+const TRIG_ON = 0.5, TRIG_OFF = 0.3; // L2/R2 are analog, so they need a threshold too
+
+let padPrev = {}, padAxis = 0, padWarned = false;
+
+function padEdge(name, isDown) {         // fire once per press, not once per frame
+  const was = padPrev[name] || false;
+  padPrev[name] = isDown;
+  return isDown && !was;
+}
+
+function pollGamepad() {
+  const gp = (navigator.getGamepads ? navigator.getGamepads() : []).find(g => g && g.connected);
+  if (!gp) return;
+  if (!padWarned && gp.mapping !== 'standard') {
+    padWarned = true;
+    toast('gamepad: non-standard mapping — buttons may be wrong');
+  }
+  const b = (i) => gp.buttons[i] || { pressed: false, value: 0 };
+  const held = (i, on, off) => {         // analog-aware, with hysteresis
+    const v = b(i).value || (b(i).pressed ? 1 : 0);
+    return padPrev['_v' + i] = v > (padPrev['_v' + i] ? off : on);
+  };
+
+  // navigation: d-pad, or the left stick treated as one
+  const ax = gp.axes[AXIS_X] || 0, ay = gp.axes[AXIS_Y] || 0;
+  const dir = Math.abs(ay) > Math.abs(ax) ? ay : ax;
+  const stick = Math.abs(dir) > (padAxis === 0 ? AXIS_ON : AXIS_OFF) ? Math.sign(dir) : 0;
+  if (stick !== padAxis) { padAxis = stick; if (stick !== 0) cmd('/cmd/navMove', [stick]); }
+  if (padEdge('up',   b(PAD.dpadUp).pressed)   || padEdge('left',  b(PAD.dpadLeft).pressed))
+    cmd('/cmd/navMove', [-1]);
+  if (padEdge('down', b(PAD.dpadDown).pressed) || padEdge('right', b(PAD.dpadRight).pressed))
+    cmd('/cmd/navMove', [1]);
+
+  if (padEdge('select',  b(PAD.select).pressed))  cmd('/cmd/navSelect', []);
+  if (padEdge('clickTg', b(PAD.clickTg).pressed)) cmd('/cmd/clickToggle', []);
+  if (padEdge('overdub', b(PAD.overdub).pressed)) cmd('/cmd/trackOverdub', [focusIdx]);
+  if (padEdge('record',  held(PAD.record, TRIG_ON, TRIG_OFF))) cmd('/cmd/trackRecord', [focusIdx]);
+  if (padEdge('clear',   held(PAD.clear,  TRIG_ON, TRIG_OFF))) cmd('/cmd/trackClear',  [focusIdx]);
+}
 
 // ---- sample browser ----
 let banks = [];
@@ -304,9 +377,9 @@ es.onmessage = (e) => {
     const [cps, phase, div] = m.args;
     onClock(cps, phase, div);
   } else if (m.address === '/state') {
-    const [focus, clickOn] = m.args;
-    setFocus(focus);
-    updateTracks(m.args.slice(2));
+    const [focus, cursor, clickOn] = m.args;
+    setFocus(focus, cursor);
+    updateTracks(m.args.slice(3));
     const cb = $('clickBtn');
     cb.textContent = 'Click: ' + (clickOn ? 'on' : 'off');
     cb.classList.toggle('on', !!clickOn);

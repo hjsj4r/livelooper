@@ -13,8 +13,9 @@
 };
 
 // ── Runtime state (not config — survives a reload) ──────────
-~cps   = ~cps ? 0.5;    // cycles/sec — updated live from Tidal OSC
-~focus = ~focus ? 0;    // which track the pedals control (set from dashboard)
+~cps    = ~cps ? 0.5;    // cycles/sec — updated live from Tidal OSC
+~focus  = ~focus ? 0;    // the SELECTED track — what the pads and triggers act on
+~cursor = ~cursor ? 0;   // the HIGHLIGHTED track — where the stick/d-pad is pointing
 
 // ── Track tempo + cycle from every pattern event ────────────
 // This runs on EVERY event Tidal sends — dense patterns across several orbits are easily
@@ -249,6 +250,34 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
     t[\synth] !? { t[\synth].set(\recRun, 0, \recLevel, 0, \preLevel, 1, \playing, 0) };
     t[\state] = \idle;
     (~tlabel.(t) ++ " CLEARED").postln;
+};
+
+// ── Navigation ──────────────────────────────────────────────
+// Two separate things on purpose, because that is what the controller layout implies:
+// the stick/d-pad moves a CURSOR, and a button commits it as the SELECTION. Record,
+// overdub and clear act on the selection, so browsing can never fire a take by accident.
+// Wraps rather than clamps — on a controller, running off the end and stopping feels
+// broken, and there is no scrollbar to tell you where you are.
+~navMove = { |delta = 1|
+    var n = ~tracks.size;
+    if (n > 0) {
+        ~cursor = ((~cursor ? 0) + delta) % n;
+        ("cursor -> t" ++ ~cursor ++ " " ++ ~tracks[~cursor][\name]).postln;
+    };
+    ~cursor;
+};
+
+~navSelect = {
+    ~focus = (~cursor ? 0).clip(0, ~tracks.size - 1);
+    ("SELECTED t" ++ ~focus ++ " " ++ ~tracks[~focus][\name]).postln;
+    ~focus;
+};
+
+// Jump straight to a track (the dashboard's click, which needs no cursor step).
+~navFocus = { |i|
+    ~focus  = i.clip(0, ~tracks.size - 1);
+    ~cursor = ~focus;                       // keep the cursor with it, or the next
+    ~focus;                                 // stick nudge would jump somewhere surprising
 };
 
 // Fader.

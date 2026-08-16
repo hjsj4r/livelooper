@@ -6,7 +6,7 @@
 //  Run it headless (no MIDI hardware needed — MIDI input is simulated):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/midi-test.scd
 //
-//  Expect: "19 passed, 0 failed".
+//  Expect: "28 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, hit;
@@ -81,6 +81,36 @@ s.waitForBoot({
         0.2.wait;
         ok.("knob 1 -> mid fader",     (~tracks[1][\level] - 0.504).abs < 0.01);
         ok.("knobs are independent",   ~tracks[0][\level] == 0.0);
+
+        "".postln; "--- NAVIGATION (DualSense stick / d-pad) ---".postln;
+        // cursor and selection are separate: browsing must never fire a take
+        ~cursor = 0; ~focus = 0;
+        ~navMove.(1);
+        ok.("nav moves the cursor",        ~cursor == 1);
+        ok.("nav leaves selection alone",  ~focus == 0);
+        ~navMove.(1); ~navMove.(1);
+        ok.("cursor keeps moving",         ~cursor == 3);
+        ~navSelect.();
+        ok.("select commits the cursor",   ~focus == 3);
+        // wrapping, so running off the end doesn't feel broken with no scrollbar
+        ~cursor = ~tracks.size - 1;
+        ~navMove.(1);
+        ok.("cursor wraps forward",        ~cursor == 0);
+        ~navMove.(-1);
+        ok.("cursor wraps backward",       ~cursor == (~tracks.size - 1));
+        // clicking a strip in the dashboard must move BOTH, or the next stick nudge jumps
+        ~navFocus.(2);
+        ok.("navFocus sets selection",     ~focus == 2);
+        ok.("navFocus drags the cursor",   ~cursor == 2);
+        // and the pads still act on the SELECTION, not the cursor
+        ~cursor = 5;
+        hit.(0, ~padRecord);
+        0.3.wait;
+        ok.("pads follow selection not cursor",
+            ~tracks[2][\state] == \recording and: { ~tracks[5][\state] == \idle });
+        hit.(0, ~padClear);
+        0.3.wait;
+        ~focus = 0; ~cursor = 0;
 
         "".postln; "--- WHAT MUST NOT RESPOND ---".postln;
         // the MPK keyboard shares channel 0; the retired map used notes 60/61, so

@@ -6,7 +6,7 @@
 //  Run it headless (does NOT need the ZOOM H8 — boots the system default device):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/dashboard-test.scd
 //
-//  Expect: "21 passed, 0 failed".
+//  Expect: "24 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok;
@@ -76,14 +76,24 @@ s.waitForBoot({
         ~tracks[0][\state] = \recording;
         0.4.wait;
         ok.("track change pushed a /state", states > 0);
-        ok.("state carries every track",    lastState.size == (2 + ~tracks.size + 1));
-        ok.("state reports the new value",  lastState[3].asSymbol == \recording);
+        // /state = [addr, focus, cursor, clickOn, ...states]
+        ok.("state carries every track",    lastState.size == (3 + ~tracks.size + 1));
+        ok.("state reports the new value",  lastState[4].asSymbol == \recording);
 
         states = 0;
-        ~focus = 2;
+        ~navFocus.(2);
         0.4.wait;
         ok.("focus change pushed a /state", states > 0);
         ok.("focus value is carried",       lastState[1] == 2);
+
+        // the cursor moves independently of the selection, and must also be pushed —
+        // otherwise the dashboard highlight lags behind the stick
+        states = 0;
+        ~navMove.(1);
+        0.4.wait;
+        ok.("cursor move pushed a /state",  states > 0);
+        ok.("cursor value is carried",      lastState[2] == ~cursor);
+        ok.("selection did NOT move",       lastState[1] == 2);
 
         "".postln; "--- FADER LEVELS ---".postln;
         // a hardware knob calls ~trackLevel; the dashboard must follow

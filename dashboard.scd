@@ -45,7 +45,10 @@ OSCdef(\cmdTrackRecord,  { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackRecord
 OSCdef(\cmdTrackOverdub, { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackOverdub.(t) } }, '/cmd/trackOverdub').fix;
 OSCdef(\cmdTrackClear, { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackClear.(t) } }, '/cmd/trackClear').fix;
 OSCdef(\cmdTrackLevel, { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackLevel.(t, msg[2].asFloat) } }, '/cmd/trackLevel').fix;
-OSCdef(\cmdFocus,      { |msg| ~focus = msg[1].asInteger }, '/cmd/focus').fix;
+OSCdef(\cmdFocus,      { |msg| ~navFocus.(msg[1].asInteger) }, '/cmd/focus').fix;
+// From the DualSense, relayed by the browser's Gamepad API through the bridge.
+OSCdef(\cmdNavMove,    { |msg| ~navMove.(msg[1].asInteger) }, '/cmd/navMove').fix;
+OSCdef(\cmdNavSelect,  { |msg| ~navSelect.() },                '/cmd/navSelect').fix;
 OSCdef(\cmdClickToggle, {
     ~clickOn = (~clickOn ? false).not;
     ("Click " ++ (~clickOn.if({ "ON" }, { "OFF" }))).postln;
@@ -94,7 +97,8 @@ OSCdef(\cmdPreview,  { |msg| ~preview.(msg[1].asString, msg[2].asInteger) }, '/c
 
 // Discrete state — only sent when it actually changes.
 ~sendState = {
-    ~dash.sendMsg('/state', (~focus ? 0).asInteger, (~clickOn ? false).binaryValue,
+    ~dash.sendMsg('/state', (~focus ? 0).asInteger, (~cursor ? 0).asInteger,
+        (~clickOn ? false).binaryValue,
         *~tracks.collect({ |t| (t[\state] ? \idle).asString }));
 };
 
@@ -130,7 +134,8 @@ OSCdef(\cmdPreview,  { |msg| ~preview.(msg[1].asString, msg[2].asInteger) }, '/c
         var lastFocus = nil, lastClick = nil, nextClock = 0, changed, moved, now;
         while({ myGen == ~dashGen }, {
             now     = Main.elapsedTime;
-            changed = (lastFocus != (~focus ? 0)) or: { lastClick != (~clickOn ? false) };
+            changed = (lastFocus != [(~focus ? 0), (~cursor ? 0)])
+                or: { lastClick != (~clickOn ? false) };
             moved   = false;
             if (~tracks.size != lastStates.size) {          // track count changed
                 lastStates = Array.fill(~tracks.size, \none);
@@ -148,7 +153,7 @@ OSCdef(\cmdPreview,  { |msg| ~preview.(msg[1].asString, msg[2].asInteger) }, '/c
                 };
             };
             if (changed) {
-                lastFocus = ~focus ? 0;
+                lastFocus = [(~focus ? 0), (~cursor ? 0)];
                 lastClick = ~clickOn ? false;
                 ~sendState.();
             };
