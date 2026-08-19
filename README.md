@@ -102,6 +102,7 @@ sequence — map it rather than guessing:
 | `test/looper-test.scd` | Regression test for the record path + signal path |
 | `test/dashboard-test.scd` | Regression test for the dashboard message rate |
 | `test/stereo-test.scd` | Regression test for stereo (two-input) tracks |
+| `test/fx-test.scd` | Regression test for the per-track FX chain |
 
 ## Roadmap
 

@@ -63,6 +63,12 @@
   .track-in { color: var(--dim); font-size: 12px; }
   .track-badge { flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: .05em; padding: 4px 9px; border-radius: 5px; text-transform: uppercase; background: var(--idle); color: #04121f; }
   .fader { flex: 1 1 140px; min-width: 100px; accent-color: var(--accent); }
+  /* drive amount, driven by R2 — read-only, it shows what the trigger is doing */
+  .fxbar { width: 52px; height: 6px; background: #10141b; border-radius: 3px;
+           overflow: hidden; flex-shrink: 0; }
+  .fxbar > i { display: block; height: 100%; width: 0%; background: var(--rec);
+               transition: width .05s linear; }
+  .track.driven { border-color: var(--rec); }
   .track button { background: #10141b; color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
   .track button:hover { border-color: #3a4557; }
   .track .rec { min-width: 104px; }
@@ -239,6 +245,7 @@ function buildTracks(args) {
       `<div class="track-in">in ${inp}</div></div>` +
       `<span class="track-badge">IDLE</span>` +
       `<input type="range" class="fader" min="0" max="1" step="0.01" value="1">` +
+      `<div class="fxbar" title="drive (R2)"><i></i></div>` +
       `<button class="rec">● Rec</button><button class="dub">＋ Dub</button>` +
       `<button class="clr">Clear</button>`;
     // Clicking anywhere on the strip selects it — the pads act on the selection, so
@@ -346,9 +353,16 @@ const PAD = {
   record:  1,    // Circle
   overdub: 2,    // Square
   clear:   3,    // Triangle
+  drive:   7,    // R2 — ANALOG, pressure drives the distortion amount
   clickTg: 9,    // Options — toggles the metronome
   dpadUp: 12, dpadDown: 13, dpadLeft: 14, dpadRight: 15,
 };
+// R2 is continuous, so it needs quantising or it would post on every animation frame.
+// 1/64 steps are finer than the ear can follow on a drive control, and the synth lags
+// the value anyway, so this is inaudible — but it turns a 60/s firehose into a handful
+// of messages per sweep, and exactly zero while the trigger is still.
+const DRIVE_STEPS = 64;
+let lastDrive = -1;
 const AXIS_X = 0, AXIS_Y = 1;        // left stick
 const AXIS_ON = 0.5, AXIS_OFF = 0.3; // hysteresis: must fall back below OFF to re-fire
 
@@ -384,6 +398,11 @@ function pollGamepad() {
   if (padEdge('record',  b(PAD.record).pressed))  cmd('/cmd/trackRecord',  [focusIdx]);
   if (padEdge('overdub', b(PAD.overdub).pressed)) cmd('/cmd/trackOverdub', [focusIdx]);
   if (padEdge('clear',   b(PAD.clear).pressed))   cmd('/cmd/trackClear',   [focusIdx]);
+
+  // R2 pressure -> drive on the selected track. Spring return means it always lands
+  // back at clean, so an effect can never be left engaged by accident.
+  const step = Math.round((b(PAD.drive).value || 0) * DRIVE_STEPS);
+  if (step !== lastDrive) { lastDrive = step; cmd('/cmd/trackFx', [focusIdx, step / DRIVE_STEPS]); }
 }
 
 // ---- sample browser ----
@@ -461,6 +480,13 @@ es.onmessage = (e) => {
     }
   } else if (m.address === '/levels') {
     applyLevels(m.args);
+  } else if (m.address === '/fx') {
+    [...$('tracks').children].forEach((el, i) => {
+      const v = m.args[i] || 0;
+      const bar = el.querySelector('.fxbar > i');
+      if (bar) bar.style.width = (v * 100).toFixed(0) + '%';
+      el.classList.toggle('driven', v > 0.02);
+    });
   } else if (m.address === '/tracksInit') {
     buildTracks(m.args.slice(1));          // args[0] = count, rest = input channels
   } else if (m.address === '/banksClear') {

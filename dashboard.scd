@@ -45,6 +45,8 @@ OSCdef(\cmdTrackRecord,  { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackRecord
 OSCdef(\cmdTrackOverdub, { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackOverdub.(t) } }, '/cmd/trackOverdub').fix;
 OSCdef(\cmdTrackClear, { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackClear.(t) } }, '/cmd/trackClear').fix;
 OSCdef(\cmdTrackLevel, { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackLevel.(t, msg[2].asFloat) } }, '/cmd/trackLevel').fix;
+// R2 pressure. Arrives often while the trigger moves, so the handler stays trivial.
+OSCdef(\cmdTrackFx,    { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackFx.(t, msg[2].asFloat) } }, '/cmd/trackFx').fix;
 OSCdef(\cmdFocus,      { |msg| ~navFocus.(msg[1].asInteger) }, '/cmd/focus').fix;
 // From the DualSense, relayed by the browser's Gamepad API through the bridge.
 OSCdef(\cmdNavMove,    { |msg| ~navMove.(msg[1].asInteger) }, '/cmd/navMove').fix;
@@ -67,8 +69,9 @@ OSCdef(\cmdDirtLevel, { |msg|
         *~tracks.collect({ |t| [t[\name].asString, ~inLabel.(t).asString] }).flatten);
 };
 // A browser connecting mid-set needs the full picture at once, not on the next change.
-OSCdef(\cmdGetTracks, { |msg| ~sendTracks.(); ~sendState.(); ~sendLevels.(); ~sendClock.() },
-    '/cmd/getTracks').fix;
+OSCdef(\cmdGetTracks, {
+    ~sendTracks.(); ~sendState.(); ~sendLevels.(); ~sendFx.(); ~sendClock.();
+}, '/cmd/getTracks').fix;
 
 // ── Sample browser backend ──────────────────────────────────
 // Send the loaded banks (name, count, name, count, ...) to the dashboard.
@@ -110,6 +113,12 @@ OSCdef(\cmdPreview,  { |msg| ~preview.(msg[1].asString, msg[2].asInteger) }, '/c
     ~dash.sendMsg('/levels', *~tracks.collect({ |t| (t[\level] ? 1.0).asFloat }));
 };
 
+// Drive amounts. Separate from /levels because they move on a completely different
+// rhythm — a trigger sweep is a burst, a fader is occasional.
+~sendFx = {
+    ~dash.sendMsg('/fx', *~tracks.collect({ |t| (t[\fx] ? 0).asFloat }));
+};
+
 // ~dashGen makes a stale streamer self-terminate if this file is re-evaluated.
 // Wrapped in a function so CmdPeriod can restart it: Ctrl+. clears SystemClock, which
 // would otherwise leave the dashboard frozen on its last frame.
@@ -132,17 +141,21 @@ OSCdef(\cmdPreview,  { |msg| ~preview.(msg[1].asString, msg[2].asInteger) }, '/c
         var clockEvery = 0.5, pollEvery = 1/20;
         var lastStates = Array.fill(~tracks.size, \none);
         var lastLevels = Array.fill(~tracks.size, -1);
-        var lastFocus = nil, lastClick = nil, nextClock = 0, changed, moved, now;
+        var lastFx     = Array.fill(~tracks.size, -1);
+        var lastFocus = nil, lastClick = nil, nextClock = 0, changed, moved, driven, now;
         while({ myGen == ~dashGen }, {
             now     = Main.elapsedTime;
             changed = (lastFocus != (~focus ? 0))
                 or: { lastClick != [(~clickOn ? false), (~clickAmp ? 0.5)] };
             moved   = false;
+            driven  = false;
             if (~tracks.size != lastStates.size) {          // track count changed
                 lastStates = Array.fill(~tracks.size, \none);
                 lastLevels = Array.fill(~tracks.size, -1);
+                lastFx     = Array.fill(~tracks.size, -1);
                 changed    = true;
                 moved      = true;
+                driven     = true;
             };
             ~tracks.do { |t, i|
                 if (t[\state] != lastStates[i]) { lastStates[i] = t[\state]; changed = true };
@@ -152,13 +165,15 @@ OSCdef(\cmdPreview,  { |msg| ~preview.(msg[1].asString, msg[2].asInteger) }, '/c
                     lastLevels[i] = t[\level] ? 1.0;
                     moved = true;
                 };
+                if ((t[\fx] ? 0) != lastFx[i]) { lastFx[i] = t[\fx] ? 0; driven = true };
             };
             if (changed) {
                 lastFocus = ~focus ? 0;
                 lastClick = [(~clickOn ? false), (~clickAmp ? 0.5)];
                 ~sendState.();
             };
-            if (moved) { ~sendLevels.() };
+            if (moved)  { ~sendLevels.() };
+            if (driven) { ~sendFx.() };
             if (now >= nextClock) { nextClock = now + clockEvery; ~sendClock.() };
             pollEvery.wait;
         });

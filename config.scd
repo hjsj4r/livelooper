@@ -80,7 +80,7 @@
 // "Latency (in/out)" line is a good starting estimate (roughly the sum of the two).
 // Too far and the loop will start to sound early — that is the other side of the same
 // adjustment, not a different problem.
-~loopOffset    = 0.0;
+~loopOffset    = 0.025;
 
 // Loop buffers are allocated ONCE, at the size the slowest tempo you'll ever record at
 // needs — so hitting record never allocates and never stalls. Lower = longer buffers =
@@ -92,6 +92,19 @@
                              // direct on the H8 — that removes the A/D→D/A round trip
                              // from what you hear while playing.
 ~restoreLoopsOnPanic = true; // Ctrl+. re-arms playing loops instead of dropping them
+
+
+// ── Effects ─────────────────────────────────────────────────
+// Every track runs through its own FX synth. At drive 0 it is a true bypass (the dry
+// signal is crossfaded through untouched), so leaving it in costs nothing audible.
+//
+// The drive is voiced for GUITAR: lows are rolled off before the clipping stage, the way
+// an amp does, because clipping a full-range low string just sounds muddy. Raise
+// ~fxPreHighpass for an even tighter, more aggressive break-up; lower it toward 60 for
+// bass, where you want the fundamental to survive.
+~fxPreHighpass = 120;        // Hz, before the clipper
+~fxTone        = 0.5;        // post-clip brightness, 0 = dark .. 1 = fizzy
+~fxDriveMax    = 1.0;        // how far the R2 trigger can push the drive (0..1)
 
 
 // ── MIDI control surface (AKAI MPK mini) ────────────────────

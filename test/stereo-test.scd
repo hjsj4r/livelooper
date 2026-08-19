@@ -64,6 +64,9 @@ s.waitForBoot({
         // interleaved L,R,L,R... — L = 0.6, R = 0.2
         st[\buf].loadCollection(
             Array.fill(st[\loopFrames] * 2, { |i| if (i.even) { 0.6 } { 0.2 } }), 0);
+        // tell the SYNTH the new loop length as well, or the Phasor keeps wrapping at its
+        // build-time length and runs past the region we just filled
+        st[\synth].set(\loopFrames, st[\loopFrames]);
         s.sync;
         st[\synth].set(\recRun, 0, \recLevel, 0, \preLevel, 1,
             \playing, 1, \monLevel, 0, \level, 1.0);

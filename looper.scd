@@ -84,7 +84,8 @@ SynthDef(\looperMono, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
     var wsig   = (dry * (recRun * recLevel)) + (old * preLevel);
     var out    = ((old * playing) + (dry * monLevel)) * level;   // fader scales monitor + loop
     BufWr.ar(wsig, bufnum, phase, loop: 1);
-    Out.ar(0, out ! 2);
+    // Into the track's private FX bus rather than straight out — see \trackFx below.
+    Out.ar(\outBus.ir(0), out ! 2);
 }).add;
 
 // Same signal path, two channels through. No `! 2` at the end: the loop is already
@@ -99,7 +100,31 @@ SynthDef(\looperStereo, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
     var wsig   = (dry * (recRun * recLevel)) + (old * preLevel);
     var out    = ((old * playing) + (dry * monLevel)) * level;
     BufWr.ar(wsig, bufnum, phase, loop: 1);
-    Out.ar(0, out);
+    Out.ar(\outBus.ir(0), out);
+}).add;
+
+// One FX synth per track, reading that track's private bus and writing to the main out.
+// Kept OUT of the looper def on purpose: the record path took real work to get right and
+// should not be recompiled every time an effect changes. It also means loopers can sit at
+// the head of the node tree and FX at the tail, so ordering is automatic.
+//
+// Guitar drive. The pre-highpass matters more than the clipper itself — an amp rolls the
+// lows off BEFORE its distortion stage, and skipping that is what makes naive soft-clip
+// sound like mud on a low string. The post low-pass stands in for a speaker cab.
+//
+// At drive 0 the crossfade sits fully on the dry signal, so this is a true bypass.
+SynthDef(\trackFx, { |inBus = 0, out = 0, level = 1|
+    // Lag: R2 arrives quantised from the browser, and stepping straight to each new value
+    // would zipper. 20 ms is short enough to still feel immediate under the finger.
+    var drive = Lag.kr(\drive.kr(0).clip(0, 1), 0.02);
+    var tone  = \tone.kr(0.5);
+    var dry   = In.ar(inBus, 2);
+    var pre   = HPF.ar(dry, \preHighpass.kr(120));
+    var hot   = (pre * (1 + (drive * 40))).tanh;
+    var wet   = LPF.ar(hot, tone.linexp(0, 1, 1800, 6000));
+    // level-compensate, or leaning on the trigger doubles as a volume pedal
+    var sig   = XFade2.ar(dry, wet * (1 / (1 + (drive * 4))), (drive * 2) - 1);
+    Out.ar(out, sig * level);
 }).add;
 
 // Frames needed for a ~numLoopCycles loop at a given tempo.
@@ -121,8 +146,10 @@ SynthDef(\looperStereo, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
 // synths AND buffers (sclang's GC never reclaims server-side buffers, so just dropping
 // the reference would leak a few MB per reload). Loops survive Ctrl+., not a file reload.
 ~tracks !? { ~tracks.do { |t|
-    t[\synth] !? { t[\synth].free };
-    t[\buf]   !? { t[\buf].free };
+    t[\synth]   !? { t[\synth].free };
+    t[\fxSynth] !? { t[\fxSynth].free };
+    t[\buf]     !? { t[\buf].free };
+    t[\fxBus]   !? { t[\fxBus].free };
 } };
 // inputs is ALWAYS a list, so mono and stereo tracks have the same shape everywhere
 // downstream; only the SynthDef and the buffer's channel count differ.
@@ -130,6 +157,7 @@ SynthDef(\looperStereo, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
     (idx: i,
         name: (~trackNames !? { ~trackNames[i] }) ?? { "Track " ++ i },
         inputs: spec.asArray, state: \idle, buf: nil, synth: nil,
+        fxBus: nil, fxSynth: nil, fx: 0.0,
         gen: 0, level: 1.0, startCycle: 0)
 };
 if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
@@ -271,6 +299,14 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
     ~focus;
 };
 
+// Drive amount, 0..1. Comes from the R2 trigger, so it is called often — it does nothing
+// but a .set, and the synth lags the value itself.
+~trackFx = { |t, amt|
+    t[\fx] = amt.clip(0, 1) * (~fxDriveMax ? 1.0);
+    t[\fxSynth] !? { t[\fxSynth].set(\drive, t[\fx]) };
+    t[\fx];
+};
+
 // Fader.
 ~trackLevel = { |t, lvl|
     t[\level] = lvl;
@@ -325,15 +361,22 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
     };
     ~tracks.do { |t|
         t[\state] = \idle;
-        t[\buf] !? {
+        (t[\buf].notNil and: { t[\fxBus].notNil }) .if {
             var ins  = t[\inputs];
             var args = [bufnum: t[\buf], loopFrames: t[\loopFrames], recLevel: 0,
-                preLevel: 1, monLevel: ~monLevel, recRun: 0, playing: 0, level: t[\level]];
+                preLevel: 1, monLevel: ~monLevel, recRun: 0, playing: 0,
+                level: t[\level], outBus: t[\fxBus]];
             t[\synth] = if (ins.size >= 2) {
                 Synth(\looperStereo, args ++ [inChanL: ins[0], inChanR: ins[1]]);
             } {
                 Synth(\looperMono, args ++ [inChan: ins[0]]);
             };
+            // addToTail so the FX always runs after every looper. Order among the FX
+            // synths themselves is irrelevant — each reads its own private bus.
+            t[\fxSynth] = Synth(\trackFx, [
+                inBus: t[\fxBus], out: 0, drive: (t[\fx] ? 0),
+                tone: ~fxTone, preHighpass: ~fxPreHighpass
+            ], addAction: \addToTail);
         };
     };
     if (~restoreLoopsOnPanic) {
@@ -349,6 +392,7 @@ ServerTree.add(~buildTracks, s);
 ~forgetTracks = {
     ~tracks.do { |t|
         t[\buf] = nil; t[\synth] = nil; t[\state] = \idle;
+        t[\fxBus] = nil; t[\fxSynth] = nil;
         t[\bufFrames] = nil; t[\loopFrames] = nil;
     };
 };
@@ -371,6 +415,8 @@ fork {
         t[\buf]        = Buffer.alloc(s, maxFrames, nch);
         t[\bufFrames]  = maxFrames;
         t[\loopFrames] = ~loopFramesFor.(~cps).min(maxFrames);
+        // the looper's output always ends up stereo, so the FX bus is stereo either way
+        t[\fxBus]      = Bus.audio(s, 2);
     };
     s.sync;
     ~buildTracks.value;
