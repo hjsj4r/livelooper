@@ -6,7 +6,7 @@
 //  Run it headless (does NOT need the ZOOM H8 — boots the system default device):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/dashboard-test.scd
 //
-//  Expect: "24 passed, 0 failed".
+//  Expect: "25 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok;
@@ -76,7 +76,7 @@ s.waitForBoot({
         ~tracks[0][\state] = \recording;
         0.4.wait;
         ok.("track change pushed a /state", states > 0);
-        // /state = [addr, focus, cursor, clickOn, ...states]
+        // /state = [addr, focus, clickOn, clickAmp, ...states]
         ok.("state carries every track",    lastState.size == (3 + ~tracks.size + 1));
         ok.("state reports the new value",  lastState[4].asSymbol == \recording);
 
@@ -86,14 +86,20 @@ s.waitForBoot({
         ok.("focus change pushed a /state", states > 0);
         ok.("focus value is carried",       lastState[1] == 2);
 
-        // the cursor moves independently of the selection, and must also be pushed —
-        // otherwise the dashboard highlight lags behind the stick
         states = 0;
         ~navMove.(1);
         0.4.wait;
-        ok.("cursor move pushed a /state",  states > 0);
-        ok.("cursor value is carried",      lastState[2] == ~cursor);
-        ok.("selection did NOT move",       lastState[1] == 2);
+        ok.("nav move pushed a /state",     states > 0);
+        ok.("nav moved the selection",      lastState[1] == 3);
+
+        // the click level is live state and must reach the dashboard too
+        states = 0;
+        ~clickAmp = 0.25;
+        0.4.wait;
+        ok.("click level pushed a /state",  states > 0);
+        ok.("click level is carried",       (lastState[3] - 0.25).abs < 0.001);
+        ~clickAmp = 0.5;
+        0.4.wait;
 
         "".postln; "--- FADER LEVELS ---".postln;
         // a hardware knob calls ~trackLevel; the dashboard must follow

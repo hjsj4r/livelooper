@@ -69,9 +69,17 @@
 // phrase grid, so a loop armed halfway through a phrase still records into the right part
 // of the bar. Raise it only if you want punch-in itself to be coarser.
 ~recordQuantize = 1;
-// Shifts where a loop's BOUNDARY falls in the bar. It does NOT correct loop timing:
-// record and play share one Phasor, so moving the start moves both and the shift
-// cancels. A loop's real error is the interface round trip. Leave at 0.
+// Compensates the audio round trip, in seconds. THIS IS A WORKING KNOB — an earlier
+// comment here said it was a no-op, which was true before loop buffers were locked to the
+// phrase grid and is not true now. Measured: 0.1 here shifts the recording 96 ms against
+// the grid.
+//
+// You play in time with what you HEAR, so your playing reaches the converter late by the
+// input latency and comes back late again by the output latency. The loop therefore sits
+// late against the patterns. Raise this until it locks; the boot log's
+// "Latency (in/out)" line is a good starting estimate (roughly the sum of the two).
+// Too far and the loop will start to sound early — that is the other side of the same
+// adjustment, not a different problem.
 ~loopOffset    = 0.0;
 
 // Loop buffers are allocated ONCE, at the size the slowest tempo you'll ever record at

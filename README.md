@@ -194,8 +194,8 @@ the system default device):
 $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/panic-test.scd       # 25 passed
 & $sc -D d:/livelooper/test/looper-test.scd      # 33 passed
-& $sc -D d:/livelooper/test/dashboard-test.scd   # 24 passed
-& $sc -D d:/livelooper/test/midi-test.scd        # 28 passed
+& $sc -D d:/livelooper/test/dashboard-test.scd   # 25 passed
+& $sc -D d:/livelooper/test/midi-test.scd        # 25 passed
 & $sc -D d:/livelooper/test/stereo-test.scd      # 12 passed
 ```
 

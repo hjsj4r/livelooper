@@ -35,18 +35,27 @@
   .beat.on.down { background: #fff; box-shadow: 0 0 20px #fff; }
   .sweep { height: 6px; background: #10141b; border-radius: 3px; overflow: hidden; }
   .fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), #7ec2ff); }
+  .clickvol { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  .clickvol input { flex: 1; accent-color: var(--accent); }
+
+  /* controller legend */
+  .padwrap { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
+  .padwrap svg { flex-shrink: 0; }
+  .padkey { display: flex; flex-direction: column; gap: 7px; font-size: 13px; }
+  .padkey div { display: flex; align-items: center; gap: 9px; }
+  .padkey b { color: var(--text); font-weight: 600; min-width: 86px; display: inline-block; }
+  .padkey span { color: var(--dim); }
+  .glyph { font-size: 15px; line-height: 1; }
 
   /* tracks */
   .tracks { display: flex; flex-direction: column; gap: 10px; }
   .track { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; row-gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
-  /* focus = the SELECTED track, what the pads and triggers act on */
-  .track.focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-  /* cursor = where the stick/d-pad is pointing; commit it with Cross */
-  .track.cursor { border-color: var(--dub); }
-  .track.cursor::before {
-    content: '▸'; position: absolute; margin-left: -18px; color: var(--dub); font-size: 15px;
-  }
+  /* the SELECTED track — stepping onto it with the stick/d-pad selects it outright */
   .track { position: relative; }
+  .track.focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  .track.focus::before {
+    content: '▸'; position: absolute; margin-left: -18px; color: var(--accent); font-size: 15px;
+  }
   .track-id { width: 148px; flex-shrink: 0; cursor: pointer; }
   /* names are user-chosen and can be long ("drums-bomboclat"); clip rather than let a
      long one push the transport buttons off the row. Full name is in the title attr. */
@@ -101,6 +110,10 @@
     </div>
     <div class="beats" id="beats"></div>
     <div class="sweep"><div class="fill" id="fill"></div></div>
+    <div class="clickvol">
+      <span class="dim">click level</span>
+      <input type="range" id="clickAmp" min="0" max="1" step="0.01" value="0.5">
+    </div>
   </div>
 
   <div class="panel">
@@ -111,6 +124,70 @@
   <div class="panel">
     <div class="label">Tracks (click a track's name to focus it for the pedals)</div>
     <div class="tracks" id="tracks"></div>
+  </div>
+
+  <div class="panel">
+    <div class="label">Controller — DualSense</div>
+    <div class="padwrap">
+      <!-- Only the mapped controls are drawn filled; L1/L2/R1/R2 are outlined because
+           they are reserved for effects and do nothing yet. -->
+      <svg width="260" height="150" viewBox="0 0 260 150" role="img"
+           aria-label="DualSense button mapping">
+        <defs>
+          <style>
+            .body { fill: none; stroke: var(--line); stroke-width: 2; }
+            .btn  { fill: var(--accent); }
+            .btn2 { fill: var(--dub); }
+            .off  { fill: none; stroke: var(--idle); stroke-width: 1.5; }
+            .lbl  { fill: var(--dim); font: 9px -apple-system, Segoe UI, sans-serif; }
+            .cap  { fill: #04121f; font: bold 9px -apple-system, Segoe UI, sans-serif;
+                    text-anchor: middle; }
+          </style>
+        </defs>
+        <!-- body -->
+        <path class="body" d="M78 44 h104 a26 26 0 0 1 26 26 v6 c0 30 -12 46 -30 46
+             c-14 0 -18 -12 -26 -12 h-44 c-8 0 -12 12 -26 12 c-18 0 -30 -16 -30 -46 v-6
+             a26 26 0 0 1 26 -26 z"/>
+        <!-- shoulders: reserved for FX -->
+        <rect class="off" x="60"  y="30" width="34" height="11" rx="5"/>
+        <rect class="off" x="166" y="30" width="34" height="11" rx="5"/>
+        <text class="lbl" x="62"  y="26">L1 / L2</text>
+        <text class="lbl" x="168" y="26">R1 / R2</text>
+        <text class="lbl" x="88"  y="18">reserved for FX</text>
+        <!-- d-pad: navigate -->
+        <g transform="translate(74,74)">
+          <rect class="btn2" x="-4"  y="-14" width="8" height="10" rx="2"/>
+          <rect class="btn2" x="-4"  y="4"   width="8" height="10" rx="2"/>
+          <rect class="btn2" x="-14" y="-4"  width="10" height="8" rx="2"/>
+          <rect class="btn2" x="4"   y="-4"  width="10" height="8" rx="2"/>
+        </g>
+        <text class="lbl" x="52" y="102">navigate</text>
+        <!-- face buttons -->
+        <circle class="btn" cx="186" cy="60" r="9"/><text class="cap" x="186" y="63">△</text>
+        <circle class="btn" cx="200" cy="74" r="9"/><text class="cap" x="200" y="77">○</text>
+        <circle class="btn" cx="172" cy="74" r="9"/><text class="cap" x="172" y="77">□</text>
+        <circle class="off" cx="186" cy="88" r="9"/>
+        <!-- sticks -->
+        <circle class="btn2" cx="106" cy="100" r="11"/>
+        <circle class="off"  cx="154" cy="100" r="11"/>
+        <text class="lbl" x="86" y="124">left stick</text>
+        <!-- options -->
+        <circle class="btn" cx="160" cy="52" r="5"/>
+        <text class="lbl" x="150" y="44">OPTIONS</text>
+      </svg>
+      <div class="padkey">
+        <div><b>navigate</b><span>left stick / d-pad — selects as you step</span></div>
+        <div><b><span class="glyph">○</span> Circle</b><span>record</span></div>
+        <div><b><span class="glyph">□</span> Square</b><span>overdub</span></div>
+        <div><b><span class="glyph">△</span> Triangle</b><span>clear</span></div>
+        <div><b>OPTIONS</b><span>click on / off</span></div>
+        <div><b>L1 L2 R1 R2</b><span>reserved for effects</span></div>
+      </div>
+    </div>
+    <div class="dim" style="margin-top:12px">
+      Press any button to wake the gamepad. This window must stay <b>visible</b> —
+      browsers throttle a hidden tab and the controller will feel dead.
+    </div>
   </div>
 
   <div class="panel">
@@ -134,6 +211,10 @@ function cmd(address, args=[]) {
   fetch('/cmd', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({address, args}) });
 }
 $('clickBtn').onclick = () => cmd('/cmd/clickToggle', []);
+$('clickAmp').oninput = (e) => {
+  lastLocalEdit['click'] = performance.now();
+  cmd('/cmd/clickAmp', [parseFloat(e.target.value)]);
+};
 $('dirtFader').oninput = (e) => cmd('/cmd/dirtLevel', [parseFloat(e.target.value)]);
 
 // ---- tracks ----
@@ -186,21 +267,16 @@ function updateTracks(states) {
     el.querySelector('.dub').textContent = DUB_LABEL[st] || '＋ Dub';
   });
 }
-let cursorIdx = 0;
-function setFocus(idx, cur) {
+function setFocus(idx) {
   focusIdx = idx;
-  if (cur !== undefined) cursorIdx = cur;
-  [...$('tracks').children].forEach((el, i) => {
-    el.classList.toggle('focus', i === focusIdx);
-    el.classList.toggle('cursor', i === cursorIdx);
-  });
+  [...$('tracks').children].forEach((el, i) => el.classList.toggle('focus', i === focusIdx));
 }
 
 // Fader positions pushed from SC — a hardware knob on the MPK moves these.
 // While you're dragging a slider here, your own move round-trips through SC and comes
 // straight back; without a guard a slow round-trip would yank the handle back to a value
 // you've already moved past. So ignore remote updates for a slider you just touched.
-const lastLocalEdit = [];
+const lastLocalEdit = {};   // keyed by track index, plus 'click' for the metronome level
 function applyLevels(levels) {
   [...$('tracks').children].forEach((el, idx) => {
     const v = levels[idx];
@@ -265,17 +341,16 @@ requestAnimationFrame(frame);
 // will feel dead. Unfocused but visible is fine.
 //
 // Indices are the W3C "standard gamepad" mapping, which Chrome/Edge apply to a DualSense.
+// L1/L2/R1/R2 (4,5,6,7) are deliberately UNMAPPED — reserved for effects.
 const PAD = {
-  select:  0,    // Cross
-  clickTg: 3,    // Triangle — toggles the metronome
-  overdub: 5,    // R1
-  clear:   6,    // L2
-  record:  7,    // R2
+  record:  1,    // Circle
+  overdub: 2,    // Square
+  clear:   3,    // Triangle
+  clickTg: 9,    // Options — toggles the metronome
   dpadUp: 12, dpadDown: 13, dpadLeft: 14, dpadRight: 15,
 };
 const AXIS_X = 0, AXIS_Y = 1;        // left stick
 const AXIS_ON = 0.5, AXIS_OFF = 0.3; // hysteresis: must fall back below OFF to re-fire
-const TRIG_ON = 0.5, TRIG_OFF = 0.3; // L2/R2 are analog, so they need a threshold too
 
 let padPrev = {}, padAxis = 0, padWarned = false;
 
@@ -293,12 +368,9 @@ function pollGamepad() {
     toast('gamepad: non-standard mapping — buttons may be wrong');
   }
   const b = (i) => gp.buttons[i] || { pressed: false, value: 0 };
-  const held = (i, on, off) => {         // analog-aware, with hysteresis
-    const v = b(i).value || (b(i).pressed ? 1 : 0);
-    return padPrev['_v' + i] = v > (padPrev['_v' + i] ? off : on);
-  };
 
-  // navigation: d-pad, or the left stick treated as one
+  // navigation: d-pad, or the left stick treated as one. Stepping onto a track selects
+  // it outright — no separate commit.
   const ax = gp.axes[AXIS_X] || 0, ay = gp.axes[AXIS_Y] || 0;
   const dir = Math.abs(ay) > Math.abs(ax) ? ay : ax;
   const stick = Math.abs(dir) > (padAxis === 0 ? AXIS_ON : AXIS_OFF) ? Math.sign(dir) : 0;
@@ -308,11 +380,10 @@ function pollGamepad() {
   if (padEdge('down', b(PAD.dpadDown).pressed) || padEdge('right', b(PAD.dpadRight).pressed))
     cmd('/cmd/navMove', [1]);
 
-  if (padEdge('select',  b(PAD.select).pressed))  cmd('/cmd/navSelect', []);
   if (padEdge('clickTg', b(PAD.clickTg).pressed)) cmd('/cmd/clickToggle', []);
+  if (padEdge('record',  b(PAD.record).pressed))  cmd('/cmd/trackRecord',  [focusIdx]);
   if (padEdge('overdub', b(PAD.overdub).pressed)) cmd('/cmd/trackOverdub', [focusIdx]);
-  if (padEdge('record',  held(PAD.record, TRIG_ON, TRIG_OFF))) cmd('/cmd/trackRecord', [focusIdx]);
-  if (padEdge('clear',   held(PAD.clear,  TRIG_ON, TRIG_OFF))) cmd('/cmd/trackClear',  [focusIdx]);
+  if (padEdge('clear',   b(PAD.clear).pressed))   cmd('/cmd/trackClear',   [focusIdx]);
 }
 
 // ---- sample browser ----
@@ -377,12 +448,17 @@ es.onmessage = (e) => {
     const [cps, phase, div] = m.args;
     onClock(cps, phase, div);
   } else if (m.address === '/state') {
-    const [focus, cursor, clickOn] = m.args;
-    setFocus(focus, cursor);
+    const [focus, clickOn, clickAmp] = m.args;
+    setFocus(focus);
     updateTracks(m.args.slice(3));
     const cb = $('clickBtn');
     cb.textContent = 'Click: ' + (clickOn ? 'on' : 'off');
     cb.classList.toggle('on', !!clickOn);
+    // don't fight the hand — same guard as the track faders
+    if (performance.now() - (lastLocalEdit['click'] || 0) > 400) {
+      const ca = $('clickAmp');
+      if (Math.abs(parseFloat(ca.value) - clickAmp) > 0.001) ca.value = clickAmp;
+    }
   } else if (m.address === '/levels') {
     applyLevels(m.args);
   } else if (m.address === '/tracksInit') {
