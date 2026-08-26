@@ -76,9 +76,9 @@
 // Short is the point. The two sides of the join are a whole loop apart musically, so a
 // long overlap is heard as a flam — you notice the crossfade instead of the splice it
 // was hiding. Ladder, if you want to move it:
-//     0.005 - 0.015   removes the click, otherwise inaudible
+//     0.005 - 0.015   removes the click, otherwise inaudible        <- set here
 //     0.02  - 0.04    also smooths a transient sitting on the seam
-//     0.06  +         starts to read as a blend, then as a flam      <- trying this
+//     0.06  +         starts to read as a blend, then as a flam
 // 0 disables it entirely.
 //
 // Read when you hit RECORD, not continuously: change it, then re-record to hear it.
