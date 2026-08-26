@@ -83,10 +83,13 @@
 //
 // Read when you hit RECORD, not continuously: change it, then re-record to hear it.
 ~xfadeSecs  = 0.06;
-// Shape. 0.5 = equal POWER (constant loudness — the usual choice, and what a butt
-// splice most obviously lacks). 1.0 = equal GAIN, linear, better when the two sides are
-// near-identical material. Above 1 the join gets slower and more gradual.
-~xfadeCurve = 0.5;
+// Shape. MEASURED on a real take: the two sides of the join are the same musical moment
+// one loop apart, so they are highly correlated and ADD rather than power-sum.
+//   0.5 (equal power) gave +3.0 dB across the join — an audible swell at the seam.
+//   1.0 (equal gain, linear) gave 0.0 dB — unity, which is what this material wants.
+// Equal power is the right default for UNcorrelated sources; it is the wrong one here.
+// Above 1 the join gets slower and more gradual.
+~xfadeCurve = 1.0;
 
 // Which cycle boundaries a recording is allowed to START on. 1 = the next measure, which
 // is almost always what you want when you hit record.
