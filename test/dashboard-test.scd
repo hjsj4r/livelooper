@@ -6,12 +6,12 @@
 //  Run it headless (does NOT need the ZOOM H8 — boots the system default device):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/dashboard-test.scd
 //
-//  Expect: "25 passed, 0 failed".
+//  Expect: "30 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok;
 var clocks = 0, states = 0, legacy = 0, levels = 0;
-var lastCps, lastPhase, lastDiv, lastState, lastLevels, lastInit, window = 4.0;
+var lastCps, lastPhase, lastDiv, lastState, lastLevels, lastInit, lastCycles, window = 4.0;
 
 ok = { |label, cond|
     if (cond) { pass = pass + 1; ("  PASS  " ++ label).postln }
@@ -45,6 +45,7 @@ s.waitForBoot({
         OSCdef(\dtState,  { |msg| states = states + 1; lastState  = msg }, '/state');
         OSCdef(\dtLevels, { |msg| levels = levels + 1; lastLevels = msg }, '/levels');
         OSCdef(\dtInit,   { |msg| lastInit = msg }, '/tracksInit');
+        OSCdef(\dtCycles, { |msg| lastCycles = msg }, '/cycles');
         // the retired chatty addresses must not come back
         OSCdef(\dtLegacyA, { |msg| legacy = legacy + 1 }, '/tick');
         OSCdef(\dtLegacyB, { |msg| legacy = legacy + 1 }, '/trackStates');
@@ -76,9 +77,9 @@ s.waitForBoot({
         ~tracks[0][\state] = \recording;
         0.4.wait;
         ok.("track change pushed a /state", states > 0);
-        // /state = [addr, focus, clickOn, clickAmp, ...states]
-        ok.("state carries every track",    lastState.size == (3 + ~tracks.size + 1));
-        ok.("state reports the new value",  lastState[4].asSymbol == \recording);
+        // /state = [addr, focus, clickOn, clickAmp, dirtLevel, ...states]
+        ok.("state carries every track",    lastState.size == (4 + ~tracks.size + 1));
+        ok.("state reports the new value",  lastState[5].asSymbol == \recording);
 
         states = 0;
         ~navFocus.(2);
@@ -99,6 +100,26 @@ s.waitForBoot({
         ok.("click level pushed a /state",  states > 0);
         ok.("click level is carried",       (lastState[3] - 0.25).abs < 0.001);
         ~clickAmp = 0.5;
+        0.4.wait;
+
+        // the Tidal level rides in /state too, so the stick can move it and the
+        // dashboard slider follows
+        states = 0;
+        ~dirtLevel = 0.6;
+        0.4.wait;
+        ok.("tidal level pushed a /state",  states > 0);
+        ok.("tidal level is carried",       (lastState[4] - 0.6).abs < 0.001);
+        ~dirtLevel = 1.0;
+        0.4.wait;
+
+        "".postln; "--- LOOP LENGTH ---".postln;
+        states = 0;
+        ~trackCycles.(~tracks[0], 8);
+        0.4.wait;
+        ok.("length change pushed /cycles", lastCycles.notNil);
+        ok.("cycles carries every track",   lastCycles.size == (~tracks.size + 1));
+        ok.("cycles reports the new value", lastCycles[1] == 8);
+        ~trackCycles.(~tracks[0], 4);
         0.4.wait;
 
         "".postln; "--- FADER LEVELS ---".postln;

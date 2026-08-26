@@ -50,6 +50,14 @@ OSCdef(\cmdTrackFx,    { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackFx.(t, m
 OSCdef(\cmdFocus,      { |msg| ~navFocus.(msg[1].asInteger) }, '/cmd/focus').fix;
 // From the DualSense, relayed by the browser's Gamepad API through the bridge.
 OSCdef(\cmdNavMove,    { |msg| ~navMove.(msg[1].asInteger) }, '/cmd/navMove').fix;
+// Left/right on the stick — nudges whatever the selection is sitting on, tracks and the
+// two mixer items alike.
+OSCdef(\cmdNavAdjust,  { |msg| ~navAdjust.(msg[1].asFloat) }, '/cmd/navAdjust').fix;
+OSCdef(\cmdTrackCycles, { |msg|
+    ~tracks[msg[1].asInteger] !? { |t|
+        if (msg.size > 2) { ~trackCycles.(t, msg[2].asInteger) } { ~trackCyclesNext.(t) };
+    };
+}, '/cmd/trackCycles').fix;
 // Click level. Read live by the click Task on every beat, so it takes effect instantly.
 OSCdef(\cmdClickAmp,   { |msg| ~clickAmp = msg[1].asFloat.clip(0, 1) }, '/cmd/clickAmp').fix;
 OSCdef(\cmdClickToggle, {
@@ -70,7 +78,7 @@ OSCdef(\cmdDirtLevel, { |msg|
 };
 // A browser connecting mid-set needs the full picture at once, not on the next change.
 OSCdef(\cmdGetTracks, {
-    ~sendTracks.(); ~sendState.(); ~sendLevels.(); ~sendFx.(); ~sendClock.();
+    ~sendTracks.(); ~sendState.(); ~sendLevels.(); ~sendFx.(); ~sendCycles.(); ~sendClock.();
 }, '/cmd/getTracks').fix;
 
 // ── Sample browser backend ──────────────────────────────────
@@ -100,10 +108,17 @@ OSCdef(\cmdPreview,  { |msg| ~preview.(msg[1].asString, msg[2].asInteger) }, '/c
 };
 
 // Discrete state — only sent when it actually changes.
+// The two mixer levels ride along here because they are low-rate and the selection can
+// now land on them, so the dashboard has to show them moving.
 ~sendState = {
     ~dash.sendMsg('/state', (~focus ? 0).asInteger, (~clickOn ? false).binaryValue,
-        (~clickAmp ? 0.5).asFloat,
+        (~clickAmp ? 0.5).asFloat, (~dirtLevel ? 1.0).asFloat,
         *~tracks.collect({ |t| (t[\state] ? \idle).asString }));
+};
+
+// Loop length per track, in bars.
+~sendCycles = {
+    ~dash.sendMsg('/cycles', *~tracks.collect({ |t| (t[\cycles] ? 4).asInteger }));
 };
 
 // Fader positions. Separate from /state because levels move for a different reason
@@ -142,17 +157,20 @@ OSCdef(\cmdPreview,  { |msg| ~preview.(msg[1].asString, msg[2].asInteger) }, '/c
         var lastStates = Array.fill(~tracks.size, \none);
         var lastLevels = Array.fill(~tracks.size, -1);
         var lastFx     = Array.fill(~tracks.size, -1);
-        var lastFocus = nil, lastClick = nil, nextClock = 0, changed, moved, driven, now;
+        var lastCycles = Array.fill(~tracks.size, -1);
+        var lastFocus = nil, lastClick = nil, nextClock = 0, changed, moved, driven, rebar, now;
         while({ myGen == ~dashGen }, {
             now     = Main.elapsedTime;
             changed = (lastFocus != (~focus ? 0))
-                or: { lastClick != [(~clickOn ? false), (~clickAmp ? 0.5)] };
+                or: { lastClick != [(~clickOn ? false), (~clickAmp ? 0.5), (~dirtLevel ? 1.0)] };
             moved   = false;
             driven  = false;
             if (~tracks.size != lastStates.size) {          // track count changed
                 lastStates = Array.fill(~tracks.size, \none);
                 lastLevels = Array.fill(~tracks.size, -1);
                 lastFx     = Array.fill(~tracks.size, -1);
+                lastCycles = Array.fill(~tracks.size, -1);
+                rebar      = true;
                 changed    = true;
                 moved      = true;
                 driven     = true;
@@ -166,14 +184,19 @@ OSCdef(\cmdPreview,  { |msg| ~preview.(msg[1].asString, msg[2].asInteger) }, '/c
                     moved = true;
                 };
                 if ((t[\fx] ? 0) != lastFx[i]) { lastFx[i] = t[\fx] ? 0; driven = true };
+                if ((t[\cycles] ? 4) != lastCycles[i]) {
+                    lastCycles[i] = t[\cycles] ? 4;
+                    rebar = true;
+                };
             };
             if (changed) {
                 lastFocus = ~focus ? 0;
-                lastClick = [(~clickOn ? false), (~clickAmp ? 0.5)];
+                lastClick = [(~clickOn ? false), (~clickAmp ? 0.5), (~dirtLevel ? 1.0)];
                 ~sendState.();
             };
             if (moved)  { ~sendLevels.() };
             if (driven) { ~sendFx.() };
+            if (rebar)  { ~sendCycles.() };
             if (now >= nextClock) { nextClock = now + clockEvery; ~sendClock.() };
             pollEvery.wait;
         });

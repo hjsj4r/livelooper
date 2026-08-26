@@ -54,54 +54,65 @@
 
 // ── SynthDef (one instance per track) ───────────────────────
 // inChan is ir (init-rate) — the H8 input is locked at Synth creation.
-// ONE Phasor drives both read (BufRd) and write (BufWr): the record head can never
-// drift from the play head, so overdub layers in place with no reset. reset snaps the
-// phase to 0 to align the loop start to the grid. level = the track's mixer fader.
-// Two defs, because BufRd/BufWr channel counts are fixed when the SynthDef is built.
-// A mono jack gets \looperMono; a stereo pair (a stereo mic on two H8 inputs) gets
-// \looperStereo. The two channels are separate ir controls rather than chan/chan+1, so
-// a pair does not have to be adjacent — the H8's ASIO order is not a sequence.
-SynthDef(\looperMono, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
-        recRun = 0, playing = 0, reset = 0, level = 1.0|
-    var inChan = \inChan.ir(0);
-    // Loop length is a CONTROL, not the buffer's size. The buffer is allocated once at
-    // its maximum length and Phasor just wraps earlier, so changing the loop length —
-    // i.e. hitting record at a new tempo — costs one .set instead of a fresh multi-MB
-    // allocation and a server round trip.
-    var frames = \loopFrames.kr(44100);
-    var dry    = SoundIn.ar(inChan);
-    // resetPos locks the buffer to the PHRASE grid: position 0 always means "a cycle
-    // that is a multiple of ~numLoopCycles". Punch in halfway through a phrase and the
-    // reset jumps to the matching point in the buffer instead of to 0, so recording can
-    // start on the very next measure and still land in the right place. Every loop then
-    // shares one grid regardless of when it was armed.
-    var phase  = Phasor.ar(K2A.ar(reset), BufRateScale.kr(bufnum), 0, frames,
-        \resetPos.kr(0));
-    // The input is mono, so the loop is stored mono and widened at the output. Storing
-    // [dry, dry] doubled every buffer, every BufRd and every BufWr for no extra signal.
-    var old    = BufRd.ar(1, bufnum, phase, loop: 1, interpolation: 1);
-    // write mix: idle→writes old back, initial rec→overwrite, overdub→layer
-    var wsig   = (dry * (recRun * recLevel)) + (old * preLevel);
-    var out    = ((old * playing) + (dry * monLevel)) * level;   // fader scales monitor + loop
-    BufWr.ar(wsig, bufnum, phase, loop: 1);
-    // Into the track's private FX bus rather than straight out — see \trackFx below.
-    Out.ar(\outBus.ir(0), out ! 2);
-}).add;
+// One Phasor drives both read and write, so the record head can never drift from the
+// play head and overdub layers in place. resetPos locks the buffer to the phrase grid:
+// punch in halfway through a phrase and the reset jumps to the matching point in the
+// buffer, so every loop shares one grid regardless of when it was armed.
+//
+// THE LOOP JOIN
+// A take is recorded for its musical length PLUS an overlap tail. The loop region is
+// [0, frames); the tail lives just past it at [frames, frames + xfFrames) and holds a
+// second pass over the same musical span. Playback crossfades the tail out against the
+// loop's start, so the join is a blend instead of a butt splice.
+//
+// The seam sits at resetPos — where the take started, and therefore where it ended.
+// `j` is how far past that seam the play head is.
+//
+// Curve: fade-in is t^c and fade-out (1-t)^c. At c = 0.5 the squares sum to 1, i.e.
+// EQUAL POWER; at c = 1 it is linear/equal gain. Above 1 the join stretches out.
+//
+// The tail is written by the SAME BufWr, redirected: while recording past `frames` the
+// write index jumps to the tail region, so the loop's start is preserved rather than
+// being overwritten by the second pass. Read and write stay at the same index at all
+// other times, which is what keeps overdub layering in place.
+~looperGraph = { |nch|
+    var inChans  = if (nch >= 2) { [\inChanL.ir(0), \inChanR.ir(1)] } { \inChan.ir(0) };
+    var bufnum   = \bufnum.kr(0);
+    var recLevel = \recLevel.kr(0), preLevel = \preLevel.kr(1);
+    var monLevel = \monLevel.kr(1.0), recRun = \recRun.kr(0);
+    var playing  = \playing.kr(0), reset = \reset.kr(0), level = \level.kr(1.0);
+    var frames   = \loopFrames.kr(44100);
+    var resetPos = \resetPos.kr(0);
+    var xf       = \xfFrames.kr(0);
+    var curve    = \xfCurve.kr(0.5);
+    var dry      = SoundIn.ar(inChans);
+    var phase    = Phasor.ar(K2A.ar(reset), BufRateScale.kr(bufnum), 0, frames, resetPos);
+    // samples since this take began — places the overlap tail
+    var n        = Sweep.ar(K2A.ar(reset), SampleRate.ir);
+    var inTail   = ((n >= frames) * recRun).clip(0, 1);
+    var tailPos  = (n - frames).max(0);
+    var j        = (phase - resetPos + frames) % frames;
+    // +1 so that xf = 1 (the disabled case) gives t = 1 everywhere and no blend at all
+    var t        = ((j + 1) / xf.max(1)).clip(0, 1);
+    var head     = BufRd.ar(nch, bufnum, phase, loop: 1, interpolation: 1);
+    var tail     = BufRd.ar(nch, bufnum, frames + j, loop: 1, interpolation: 1);
+    var old      = (head * t.pow(curve)) + (tail * (1 - t).pow(curve));
+    // arithmetic blend rather than Select, so it expands cleanly over 2 channels
+    var wIdx     = (phase * (1 - inTail)) + ((frames + tailPos) * inTail);
+    var normal   = (dry * (recRun * recLevel)) + (head * preLevel);
+    var wsig     = (normal * (1 - inTail)) + (dry * inTail);
+    // `head`, not `old` — writing the crossfaded signal back would bake the join in
+    // again on every pass
+    var out      = ((old * playing) + (dry * monLevel)) * level;
+    BufWr.ar(wsig, bufnum, wIdx, loop: 1);
+    Out.ar(\outBus.ir(0), if (nch >= 2) { out } { out ! 2 });
+};
 
-// Same signal path, two channels through. No `! 2` at the end: the loop is already
-// stereo, so widening would collapse it.
-SynthDef(\looperStereo, { |bufnum, recLevel = 0, preLevel = 1, monLevel = 1.0,
-        recRun = 0, playing = 0, reset = 0, level = 1.0|
-    var frames = \loopFrames.kr(44100);
-    var dry    = SoundIn.ar([\inChanL.ir(0), \inChanR.ir(1)]);
-    var phase  = Phasor.ar(K2A.ar(reset), BufRateScale.kr(bufnum), 0, frames,
-        \resetPos.kr(0));
-    var old    = BufRd.ar(2, bufnum, phase, loop: 1, interpolation: 1);
-    var wsig   = (dry * (recRun * recLevel)) + (old * preLevel);
-    var out    = ((old * playing) + (dry * monLevel)) * level;
-    BufWr.ar(wsig, bufnum, phase, loop: 1);
-    Out.ar(\outBus.ir(0), out);
-}).add;
+// Two defs, because BufRd/BufWr channel counts are fixed when the SynthDef is built.
+// A mono jack gets \looperMono; a stereo pair gets \looperStereo, whose two channels are
+// separate ir controls so the pair need not be adjacent.
+SynthDef(\looperMono,   { ~looperGraph.(1) }).add;
+SynthDef(\looperStereo, { ~looperGraph.(2) }).add;
 
 // One FX synth per track, reading that track's private bus and writing to the main out.
 // Kept OUT of the looper def on purpose: the record path took real work to get right and
@@ -127,16 +138,25 @@ SynthDef(\trackFx, { |inBus = 0, out = 0, level = 1|
     Out.ar(out, sig * level);
 }).add;
 
-// Frames needed for a ~numLoopCycles loop at a given tempo.
-~loopFramesFor = { |cps|
-    ((s.sampleRate ?? { s.options.sampleRate ? 44100 }) * ~numLoopCycles / cps).round.asInteger
+~srate = { s.sampleRate ?? { s.options.sampleRate ? 44100 } };
+
+// Frames for a loop of `cycles` bars at a given tempo. Cycles defaults to the config
+// value so existing callers keep working.
+~loopFramesFor = { |cps, cycles|
+    (~srate.() * (cycles ? ~numLoopCycles) / cps).round.asInteger
 };
+
+// Length of the recorded overlap tail, in frames.
+~xfadeFrames = { (~srate.() * (~xfadeSecs ? 0)).round.asInteger.max(0) };
 
 // Where in the loop buffer a given Tidal cycle falls. Buffer position 0 is always a
 // phrase downbeat, so this is what lets a loop be armed on ANY measure and still stack
 // with the others.
-~phasePosFor = { |cycle, frames|
-    ((cycle % ~numLoopCycles) / ~numLoopCycles * frames).round.asInteger.clip(0, frames - 1);
+// Cycles is the TRACK's own length, not the global default: a 4-bar loop locks to
+// cycle % 4 and an 8-bar loop to cycle % 8, and because 4 divides 8 they still line up.
+~phasePosFor = { |cycle, frames, cycles|
+    var c = cycles ? ~numLoopCycles;
+    ((cycle % c) / c * frames).round.asInteger.clip(0, frames - 1);
 };
 
 // ── Tracks ──────────────────────────────────────────────────
@@ -157,7 +177,7 @@ SynthDef(\trackFx, { |inBus = 0, out = 0, level = 1|
     (idx: i,
         name: (~trackNames !? { ~trackNames[i] }) ?? { "Track " ++ i },
         inputs: spec.asArray, state: \idle, buf: nil, synth: nil,
-        fxBus: nil, fxSynth: nil, fx: 0.0,
+        fxBus: nil, fxSynth: nil, fx: 0.0, cycles: (~numLoopCycles ? 4),
         gen: 0, level: 1.0, startCycle: 0)
 };
 if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
@@ -175,7 +195,9 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
 // Cycle-quantized record → auto-play after ~numLoopCycles. Cancelable via gen.
 ~startRecording = { |t|
     var snapCps, snapGen, curCycle, q, target, timeToNext, minLead, wanted, frames, resetPos;
+    var cyc, xfFrames, takeSecs;
     snapCps    = ~cps;
+    cyc        = t[\cycles] ? ~numLoopCycles;
     t[\gen]    = (t[\gen] ? 0) + 1;
     snapGen    = t[\gen];
     curCycle   = ~nowCycle.();
@@ -194,20 +216,25 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
 
     // No allocation and no server round trip in the record path: the buffer already
     // exists at maximum length, so the loop length is just a number we set.
-    wanted = ~loopFramesFor.(snapCps);
-    frames = wanted.min(t[\bufFrames]);
+    // The overlap tail lives past the loop region, so it has to fit inside the buffer too.
+    xfFrames = ~xfadeFrames.().min((t[\bufFrames] / 4).asInteger);
+    wanted   = ~loopFramesFor.(snapCps, cyc);
+    frames   = wanted.min(t[\bufFrames] - xfFrames);
     if (frames < wanted) {
-        (~tlabel.(t) ++ " tempo is below ~minCps — loop truncated to "
-            ++ (frames / (s.sampleRate ? 44100)).round(0.01) ++ "s. Lower ~minCps in "
-            "config.scd and re-evaluate startup.scd to record this slow.").warn;
+        (~tlabel.(t) ++ " tempo is below ~minCps for a " ++ cyc ++ "-bar loop — truncated to "
+            ++ (frames / ~srate.()).round(0.01) ++ "s. Lower ~minCps (or ~maxLoopCycles) in "
+            "config.scd and re-evaluate startup.scd to record this long.").warn;
     };
     t[\loopFrames] = frames;
-    resetPos       = ~phasePosFor.(target, frames);
+    t[\xfFrames]   = xfFrames;
+    resetPos       = ~phasePosFor.(target, frames, cyc);
     t[\startPhase] = resetPos / frames;       // for tools/sync-check.scd
+    takeSecs       = (cyc / snapCps) + (xfFrames / ~srate.());
 
     (~tlabel.(t) ++ " waiting " ++ timeToNext.round(0.01) ++ "s for cycle "
-        ++ target.asInteger ++ " (phrase pos " ++ (t[\startPhase] * 100).round(1)
-        ++ "%)...").postln;
+        ++ target.asInteger ++ "  (" ++ cyc ++ " bars, phrase pos "
+        ++ (t[\startPhase] * 100).round(1) ++ "%, join "
+        ++ (xfFrames / ~srate.() * 1000).round(1) ++ "ms)...").postln;
     // Wake s.latency EARLY and timestamp the bundle for the real moment. Sending with
     // makeBundle(0) gave scsynth no lead time, so the phase reset landed ~20 ms late
     // (the "late 0.02" lines in the post window) with jitter on top. Timestamped, it
@@ -216,6 +243,7 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
         if (t[\gen] == snapGen) {
             s.makeBundle(s.latency, {
                 t[\synth].set(\bufnum, t[\buf], \loopFrames, frames, \resetPos, resetPos,
+                    \xfFrames, xfFrames, \xfCurve, (~xfadeCurve ? 0.5),
                     \recRun, 1, \recLevel, 1, \preLevel, 0, \playing, 0, \reset, 1);
             });
             // Clearing \reset must be timestamped too. Sent untimestamped it would
@@ -227,15 +255,25 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
             // measures alignment against
             t[\loopStartTime] = Main.elapsedTime + s.latency;
             (~tlabel.(t) ++ " RECORDING...").postln;
-            SystemClock.sched(~numLoopCycles / snapCps, {
+            // Playback starts at the MUSICAL end, so the loop comes in seamlessly...
+            SystemClock.sched(cyc / snapCps, {
                 if (t[\gen] == snapGen) {
                     // also timestamped, so the take ends exactly one loop after it began
                     // rather than s.latency short of it
-                    s.makeBundle(s.latency, {
-                        t[\synth].set(\recRun, 0, \recLevel, 0, \preLevel, 1, \playing, 1);
-                    });
+                    s.makeBundle(s.latency, { t[\synth].set(\playing, 1) });
                     t[\state] = \playing;
                     (~tlabel.(t) ++ " LOOPING").postln;
+                };
+                nil;
+            });
+            // ...while recording carries on into the overlap tail. The play head is
+            // already reading that tail as it is written — both advance one sample per
+            // frame from the same instant, so the crossfade works from the first pass.
+            SystemClock.sched(takeSecs, {
+                if (t[\gen] == snapGen) {
+                    s.makeBundle(s.latency, {
+                        t[\synth].set(\recRun, 0, \recLevel, 0, \preLevel, 1);
+                    });
                 };
                 nil;
             });
@@ -280,23 +318,70 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
 };
 
 // ── Navigation ──────────────────────────────────────────────
-// Stepping onto a track selects it outright — there is no separate cursor to commit.
+// The list is the tracks PLUS two mixer items — the Tidal patterns level and the click
+// level — so the stick can reach every fader without a mode. Anything at or past
+// ~tracks.size is one of those, which is also how the transport buttons know to do
+// nothing there: you cannot "record" the click.
+~navSize   = { ~tracks.size + 2 };
+~navIsTrack = { |i| (i ? ~focus ? 0) < ~tracks.size };
+~navName   = { |i|
+    var k = i ? (~focus ? 0);
+    if (k < ~tracks.size) { ~tracks[k][\name] }
+        { if (k == ~tracks.size) { "tidal level" } { "click level" } };
+};
+
+// Stepping onto an item selects it outright — there is no separate cursor to commit.
 // Wraps rather than clamps: on a controller, running off the end and stopping feels
 // broken, and there is no scrollbar to tell you where you are.
 ~navMove = { |delta = 1|
-    var n = ~tracks.size;
-    if (n > 0) {
-        ~focus = ((~focus ? 0) + delta) % n;
-        ("-> t" ++ ~focus ++ " " ++ ~tracks[~focus][\name]).postln;
-    };
+    ~focus = ((~focus ? 0) + delta) % ~navSize.();
+    ("-> " ++ ~focus ++ " " ++ ~navName.()).postln;
     ~focus;
 };
 
-// Jump straight to a track (the dashboard's click).
 ~navFocus = { |i|
-    ~focus = i.clip(0, ~tracks.size - 1);
-    ("-> t" ++ ~focus ++ " " ++ ~tracks[~focus][\name]).postln;
+    ~focus = i.clip(0, ~navSize.() - 1);
+    ("-> " ++ ~focus ++ " " ++ ~navName.()).postln;
     ~focus;
+};
+
+// Left/right on the stick nudges whatever is selected. Deltas rather than absolutes,
+// because the browser has no authoritative copy of the level — SC does.
+~navAdjust = { |delta|
+    var i = ~focus ? 0;
+    var cur, next;
+    case
+    { ~navIsTrack.(i) } {
+        cur  = ~tracks[i][\level] ? 1.0;
+        next = (cur + delta).clip(0, 1);
+        ~trackLevel.(~tracks[i], next);
+    }
+    { i == ~tracks.size } {
+        ~dirtLevel = ((~dirtLevel ? 1.0) + delta).clip(0, 1);
+        ~dirtFader !? { ~dirtFader.set(\level, ~dirtLevel) };
+        next = ~dirtLevel;
+    }
+    {
+        ~clickAmp = ((~clickAmp ? 0.5) + delta).clip(0, 1);
+        next = ~clickAmp;
+    };
+    next;
+};
+
+// Loop length in bars, for the NEXT recording on this track. Existing audio keeps the
+// length it was cut at, so changing this never disturbs a loop already playing.
+~trackCycles = { |t, n|
+    var choices = ~loopCycleChoices ? [4, 8];
+    t[\cycles] = n.clip(choices.minItem, choices.maxItem).asInteger;
+    (~tlabel.(t) ++ " next take: " ++ t[\cycles] ++ " bars").postln;
+    t[\cycles];
+};
+
+// Step to the next available length — what a single button or dashboard click does.
+~trackCyclesNext = { |t|
+    var choices = ~loopCycleChoices ? [4, 8];
+    var i = choices.indexOf(t[\cycles] ? choices.first) ? 0;
+    ~trackCycles.(t, choices[(i + 1) % choices.size]);
 };
 
 // Drive amount, 0..1. Comes from the R2 trigger, so it is called often — it does nothing
@@ -328,7 +413,7 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
     target    = now.ceil;
     if (((target - now) / cps) < (s.latency + 0.05)) { target = target + 1 };
     wait      = (target - now) / cps;
-    resetPos  = ~phasePosFor.(target, t[\loopFrames]);
+    resetPos  = ~phasePosFor.(target, t[\loopFrames], t[\cycles]);
     t[\startPhase] = resetPos / t[\loopFrames];
     (~tlabel.(t) ++ " restoring in " ++ wait.round(0.01) ++ "s...").postln;
     SystemClock.sched((wait - s.latency).max(0), {
@@ -363,7 +448,8 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
         t[\state] = \idle;
         (t[\buf].notNil and: { t[\fxBus].notNil }) .if {
             var ins  = t[\inputs];
-            var args = [bufnum: t[\buf], loopFrames: t[\loopFrames], recLevel: 0,
+            var args = [bufnum: t[\buf], loopFrames: t[\loopFrames],
+                xfFrames: (t[\xfFrames] ? 0), xfCurve: (~xfadeCurve ? 0.5), recLevel: 0,
                 preLevel: 1, monLevel: ~monLevel, recRun: 0, playing: 0,
                 level: t[\level], outBus: t[\fxBus]];
             t[\synth] = if (ins.size >= 2) {
@@ -407,14 +493,18 @@ ServerQuit.add(~forgetTracks, s);
 fork {
     var maxFrames, mb, chans;
     s.sync;
-    maxFrames = ~loopFramesFor.(~minCps);
+    // Sized for the LONGEST selectable loop at the SLOWEST supported tempo, plus room
+    // for the overlap tail. Everything shorter just wraps earlier inside it.
+    maxFrames = ~loopFramesFor.(~minCps, ~maxLoopCycles ? ~numLoopCycles) + ~xfadeFrames.();
     chans     = 0;
     ~tracks.do { |t|
         var nch = t[\inputs].size.clip(1, 2);      // stereo costs twice the buffer
         chans          = chans + nch;
         t[\buf]        = Buffer.alloc(s, maxFrames, nch);
         t[\bufFrames]  = maxFrames;
-        t[\loopFrames] = ~loopFramesFor.(~cps).min(maxFrames);
+        t[\cycles]     = t[\cycles] ? ~numLoopCycles;
+        t[\xfFrames]   = ~xfadeFrames.();
+        t[\loopFrames] = ~loopFramesFor.(~cps, t[\cycles]).min(maxFrames - t[\xfFrames]);
         // the looper's output always ends up stereo, so the FX bus is stereo either way
         t[\fxBus]      = Bus.audio(s, 2);
     };
@@ -470,8 +560,10 @@ MIDIdef.all[\looperPedal] !? { |d| d.free };
 // .fix keeps them alive through Ctrl+.; without it a panic stop leaves you with no way
 // to drive the loopers until you re-evaluate the file.
 MIDIdef.noteOn(\looperPads, { |vel, note, chan|
-    if (chan == ~midiChan) {
-        var t = ~tracks[(~focus ? 0).clip(0, ~tracks.size - 1)];
+    // Silently ignored when the selection is on a mixer item rather than a track —
+    // there is no such thing as recording the click.
+    if ((chan == ~midiChan) and: { ~navIsTrack.() }) {
+        var t = ~tracks[~focus ? 0];
         if (note == ~padRecord)  { ~trackRecord.(t) };
         if (note == ~padOverdub) { ~trackOverdub.(t) };
         if (note == ~padClear)   { ~trackClear.(t) };

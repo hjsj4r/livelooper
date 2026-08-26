@@ -6,7 +6,7 @@
 //  Run it headless (no MIDI hardware needed — MIDI input is simulated):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/midi-test.scd
 //
-//  Expect: "25 passed, 0 failed".
+//  Expect: "38 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, hit;
@@ -89,14 +89,53 @@ s.waitForBoot({
         ok.("nav selects as it steps",   ~focus == 1);
         ~navMove.(1); ~navMove.(1);
         ok.("nav keeps stepping",        ~focus == 3);
-        // wrapping, so running off the end doesn't feel broken with no scrollbar
+        // The list runs past the tracks onto the two mixer levels, so the stick can
+        // reach every fader without a mode.
+        ok.("list is tracks + 2 mixer items", ~navSize.() == (~tracks.size + 2));
         ~focus = ~tracks.size - 1;
         ~navMove.(1);
-        ok.("wraps forward",             ~focus == 0);
+        ok.("steps off the tracks onto tidal", ~focus == ~tracks.size);
+        ok.("...which is not a track",         ~navIsTrack.().not);
+        ok.("and is named",                    ~navName.() == "tidal level");
+        ~navMove.(1);
+        ok.("then onto click",                 ~focus == (~tracks.size + 1));
+        // wrapping, so running off the end doesn't feel broken with no scrollbar
+        ~navMove.(1);
+        ok.("wraps forward to the first track", ~focus == 0);
         ~navMove.(-1);
-        ok.("wraps backward",            ~focus == (~tracks.size - 1));
+        ok.("wraps backward onto click",        ~focus == (~navSize.() - 1));
         ~navFocus.(2);
         ok.("navFocus jumps directly",   ~focus == 2);
+        ok.("...and that IS a track",    ~navIsTrack.());
+
+        "".postln; "--- STICK ADJUSTS THE SELECTED LEVEL ---".postln;
+        ~navFocus.(1);
+        ~trackLevel.(~tracks[1], 0.5);
+        // capture rather than assume — the knob section above already moved track 0
+        ~other = ~tracks[0][\level];
+        ~navAdjust.(0.2);
+        ok.("adjusts the selected track", (~tracks[1][\level] - 0.7).abs < 0.001);
+        ok.("leaves other tracks alone",  ~tracks[0][\level] == ~other);
+        ~navAdjust.(9);
+        ok.("clamps at 1",               ~tracks[1][\level] == 1.0);
+        ~navAdjust.(-9);
+        ok.("clamps at 0",               ~tracks[1][\level] == 0.0);
+        ~trackLevel.(~tracks[1], 1.0);
+        // and the mixer items respond to the same control
+        ~navFocus.(~tracks.size);
+        ~dirtLevel = 0.5; ~navAdjust.(0.25);
+        ok.("adjusts the tidal level",   (~dirtLevel - 0.75).abs < 0.001);
+        ~navFocus.(~tracks.size + 1);
+        ~clickAmp = 0.5; ~navAdjust.(-0.25);
+        ok.("adjusts the click level",   (~clickAmp - 0.25).abs < 0.001);
+        ~clickAmp = 0.5; ~dirtLevel = 1.0;
+        // a transport button on a mixer item must do NOTHING
+        ~navFocus.(~tracks.size);
+        hit.(0, ~padRecord);
+        0.3.wait;
+        ok.("record on a mixer item is ignored",
+            ~tracks.every { |x| x[\state] == \idle });
+        ~navFocus.(2);
         // the transport buttons act on whatever navigation landed on
         hit.(0, ~padRecord);
         0.3.wait;

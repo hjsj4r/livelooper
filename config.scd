@@ -61,7 +61,23 @@
 // cannot drift apart. A missing name falls back to "Track N".
 ~trackNames    = ["mic", "bass", "synth", "voice", "spdsx", "bomboclat", "overhead"];
 
-~numLoopCycles = 4;          // record length, in Tidal cycles
+// Default length of a NEW loop, in bars (one Tidal cycle = one bar at ~clickDiv 4).
+// Each track keeps its own length, so a 4-bar part can sit under an 8-bar one — they
+// still stack, because each locks to its own phrase grid and 4 divides 8.
+~numLoopCycles    = 4;
+~loopCycleChoices = [4, 8];  // what the length control steps through
+~maxLoopCycles    = 8;       // buffers are sized for THIS, so it must cover the choices
+
+// ── Loop join (crossfade) ───────────────────────────────────
+// Recording runs on past the end of the loop by this much, and that extra tail is
+// crossfaded back over the start — so the join is a blend rather than a butt splice.
+// The overlap sits at the punch-in point, which is exactly where the seam is.
+// 0 disables it entirely.
+~xfadeSecs  = 0.12;
+// Shape. 0.5 = equal POWER (constant loudness — the usual choice, and what a butt
+// splice most obviously lacks). 1.0 = equal GAIN, linear, better when the two sides are
+// near-identical material. Above 1 the join gets slower and more gradual.
+~xfadeCurve = 0.5;
 
 // Which cycle boundaries a recording is allowed to START on. 1 = the next measure, which
 // is almost always what you want when you hit record.

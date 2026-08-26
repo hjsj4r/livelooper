@@ -37,6 +37,16 @@
   .fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), #7ec2ff); }
   .clickvol { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
   .clickvol input { flex: 1; accent-color: var(--accent); }
+  /* the mixer levels are selectable too, so they show the same focus marker as a track */
+  .mixitem { position: relative; border: 1px solid transparent; border-radius: 8px; }
+  .mixitem.focus { border-color: var(--accent); }
+  .mixitem.focus::before {
+    content: '▸'; position: absolute; left: -14px; color: var(--accent); font-size: 15px;
+  }
+  /* loop length, click to step 4 <-> 8 */
+  .bars { font-size: 11px; color: var(--dim); cursor: pointer; flex-shrink: 0;
+          border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; }
+  .bars:hover { border-color: var(--accent); color: var(--accent); }
 
   /* controller legend */
   .padwrap { display: flex; gap: 22px; align-items: center; flex-wrap: wrap; }
@@ -116,13 +126,15 @@
     </div>
     <div class="beats" id="beats"></div>
     <div class="sweep"><div class="fill" id="fill"></div></div>
-    <div class="clickvol">
+    <div class="clickvol mixitem" id="mixClick">
       <span class="dim">click level</span>
       <input type="range" id="clickAmp" min="0" max="1" step="0.01" value="0.5">
     </div>
   </div>
 
-  <div class="panel">
+  <!-- Both mixer levels are selectable with the stick, same as a track, so they get the
+       same focus treatment. -->
+  <div class="panel mixitem" id="mixTidal">
     <div class="label">Tidal patterns level</div>
     <input type="range" id="dirtFader" min="0" max="1" step="0.01" value="1" style="width:100%;accent-color:var(--accent)">
   </div>
@@ -182,7 +194,8 @@
         <text class="lbl" x="150" y="44">OPTIONS</text>
       </svg>
       <div class="padkey">
-        <div><b>navigate</b><span>left stick / d-pad — selects as you step</span></div>
+        <div><b>stick ↑↓</b><span>select — tracks, then tidal &amp; click levels</span></div>
+        <div><b>stick ←→</b><span>volume of whatever is selected</span></div>
         <div><b><span class="glyph">○</span> Circle</b><span>record</span></div>
         <div><b><span class="glyph">□</span> Square</b><span>overdub</span></div>
         <div><b><span class="glyph">△</span> Triangle</b><span>clear</span></div>
@@ -221,7 +234,10 @@ $('clickAmp').oninput = (e) => {
   lastLocalEdit['click'] = performance.now();
   cmd('/cmd/clickAmp', [parseFloat(e.target.value)]);
 };
-$('dirtFader').oninput = (e) => cmd('/cmd/dirtLevel', [parseFloat(e.target.value)]);
+$('dirtFader').oninput = (e) => {
+  lastLocalEdit['tidal'] = performance.now();
+  cmd('/cmd/dirtLevel', [parseFloat(e.target.value)]);
+};
 
 // ---- tracks ----
 let focusIdx = 0;
@@ -245,12 +261,18 @@ function buildTracks(args) {
       `<div class="track-in">in ${inp}</div></div>` +
       `<span class="track-badge">IDLE</span>` +
       `<input type="range" class="fader" min="0" max="1" step="0.01" value="1">` +
+      `<div class="bars" title="loop length — click to change">4 bar</div>` +
       `<div class="fxbar" title="drive (R2)"><i></i></div>` +
       `<button class="rec">● Rec</button><button class="dub">＋ Dub</button>` +
       `<button class="clr">Clear</button>`;
     // Clicking anywhere on the strip selects it — the pads act on the selection, so
     // selecting has to be as easy as possible.
     el.onclick = () => cmd('/cmd/focus', [idx]);
+    // stopPropagation: the strip itself selects on click, and changing the length
+    // shouldn't also move the selection out from under you
+    el.querySelector('.bars').onclick = (e) => {
+      e.stopPropagation(); cmd('/cmd/trackCycles', [idx]);
+    };
     el.querySelector('.rec').onclick = () => cmd('/cmd/trackRecord', [idx]);
     el.querySelector('.dub').onclick = () => cmd('/cmd/trackOverdub', [idx]);
     el.querySelector('.clr').onclick = () => cmd('/cmd/trackClear', [idx]);
@@ -274,9 +296,14 @@ function updateTracks(states) {
     el.querySelector('.dub').textContent = DUB_LABEL[st] || '＋ Dub';
   });
 }
+// The selection runs past the tracks onto the two mixer items, so the stick can reach
+// every fader. Indices: 0..n-1 tracks, then n = tidal level, n + 1 = click level.
 function setFocus(idx) {
   focusIdx = idx;
+  const n = $('tracks').children.length;
   [...$('tracks').children].forEach((el, i) => el.classList.toggle('focus', i === focusIdx));
+  $('mixTidal').classList.toggle('focus', focusIdx === n);
+  $('mixClick').classList.toggle('focus', focusIdx === n + 1);
 }
 
 // Fader positions pushed from SC — a hardware knob on the MPK moves these.
@@ -363,6 +390,10 @@ const PAD = {
 // of messages per sweep, and exactly zero while the trigger is still.
 const DRIVE_STEPS = 64;
 let lastDrive = -1;
+// Level nudging from the stick. ~20 messages/second while held, and a full sweep of the
+// fader takes a bit over a second at full deflection.
+const ADJUST_MS = 50, ADJUST_RATE = 0.045;
+let lastAdjust = 0;
 const AXIS_X = 0, AXIS_Y = 1;        // left stick
 const AXIS_ON = 0.5, AXIS_OFF = 0.3; // hysteresis: must fall back below OFF to re-fire
 
@@ -383,16 +414,28 @@ function pollGamepad() {
   }
   const b = (i) => gp.buttons[i] || { pressed: false, value: 0 };
 
-  // navigation: d-pad, or the left stick treated as one. Stepping onto a track selects
-  // it outright — no separate commit.
+  // The stick splits by axis: VERTICAL steps through the list, HORIZONTAL rides the
+  // level of whatever is selected. That keeps every fader — tracks, the Tidal patterns
+  // level and the click level — reachable without a mode.
   const ax = gp.axes[AXIS_X] || 0, ay = gp.axes[AXIS_Y] || 0;
-  const dir = Math.abs(ay) > Math.abs(ax) ? ay : ax;
-  const stick = Math.abs(dir) > (padAxis === 0 ? AXIS_ON : AXIS_OFF) ? Math.sign(dir) : 0;
-  if (stick !== padAxis) { padAxis = stick; if (stick !== 0) cmd('/cmd/navMove', [stick]); }
-  if (padEdge('up',   b(PAD.dpadUp).pressed)   || padEdge('left',  b(PAD.dpadLeft).pressed))
-    cmd('/cmd/navMove', [-1]);
-  if (padEdge('down', b(PAD.dpadDown).pressed) || padEdge('right', b(PAD.dpadRight).pressed))
-    cmd('/cmd/navMove', [1]);
+  const vert = Math.abs(ay) > (padAxis === 0 ? AXIS_ON : AXIS_OFF) ? Math.sign(ay) : 0;
+  if (vert !== padAxis) { padAxis = vert; if (vert !== 0) cmd('/cmd/navMove', [vert]); }
+  if (padEdge('up',   b(PAD.dpadUp).pressed))   cmd('/cmd/navMove', [-1]);
+  if (padEdge('down', b(PAD.dpadDown).pressed)) cmd('/cmd/navMove', [1]);
+  // D-pad left/right nudges the level by a fixed step, for fine adjustment.
+  if (padEdge('left',  b(PAD.dpadLeft).pressed))  cmd('/cmd/navAdjust', [-0.05]);
+  if (padEdge('right', b(PAD.dpadRight).pressed)) cmd('/cmd/navAdjust', [0.05]);
+
+  // Horizontal is continuous while held: rate scales with deflection past the deadzone,
+  // rate-limited so a held stick is ~20 messages/second rather than one per frame.
+  if (Math.abs(ax) > AXIS_OFF) {
+    const now = performance.now();
+    if (now - lastAdjust > ADJUST_MS) {
+      const amount = Math.sign(ax) * (Math.abs(ax) - AXIS_OFF) / (1 - AXIS_OFF);
+      lastAdjust = now;
+      cmd('/cmd/navAdjust', [amount * ADJUST_RATE]);
+    }
+  }
 
   if (padEdge('clickTg', b(PAD.clickTg).pressed)) cmd('/cmd/clickToggle', []);
   if (padEdge('record',  b(PAD.record).pressed))  cmd('/cmd/trackRecord',  [focusIdx]);
@@ -466,10 +509,20 @@ es.onmessage = (e) => {
   if (m.address === '/clock') {
     const [cps, phase, div] = m.args;
     onClock(cps, phase, div);
+  } else if (m.address === '/cycles') {
+    [...$('tracks').children].forEach((el, i) => {
+      const b = el.querySelector('.bars');
+      if (b && m.args[i] !== undefined) b.textContent = m.args[i] + ' bar';
+    });
   } else if (m.address === '/state') {
-    const [focus, clickOn, clickAmp] = m.args;
+    // [focus, clickOn, clickAmp, dirtLevel, ...trackStates]
+    const [focus, clickOn, clickAmp, dirtLevel] = m.args;
     setFocus(focus);
-    updateTracks(m.args.slice(3));
+    updateTracks(m.args.slice(4));
+    if (performance.now() - (lastLocalEdit['tidal'] || 0) > 400) {
+      const df = $('dirtFader');
+      if (Math.abs(parseFloat(df.value) - dirtLevel) > 0.001) df.value = dirtLevel;
+    }
     const cb = $('clickBtn');
     cb.textContent = 'Click: ' + (clickOn ? 'on' : 'off');
     cb.classList.toggle('on', !!clickOn);

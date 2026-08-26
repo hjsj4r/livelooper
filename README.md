@@ -103,6 +103,7 @@ sequence — map it rather than guessing:
 | `test/dashboard-test.scd` | Regression test for the dashboard message rate |
 | `test/stereo-test.scd` | Regression test for stereo (two-input) tracks |
 | `test/fx-test.scd` | Regression test for the per-track FX chain |
+| `test/join-test.scd` | Regression test for loop length + the crossfaded join |
 
 ## Roadmap
 
@@ -195,8 +196,8 @@ the system default device):
 $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/panic-test.scd       # 25 passed
 & $sc -D d:/livelooper/test/looper-test.scd      # 33 passed
-& $sc -D d:/livelooper/test/dashboard-test.scd   # 25 passed
-& $sc -D d:/livelooper/test/midi-test.scd        # 25 passed
+& $sc -D d:/livelooper/test/dashboard-test.scd   # 30 passed
+& $sc -D d:/livelooper/test/midi-test.scd        # 38 passed
 & $sc -D d:/livelooper/test/stereo-test.scd      # 12 passed
 ```
 
