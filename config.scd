@@ -103,12 +103,16 @@
 // the grid.
 //
 // You play in time with what you HEAR, so your playing reaches the converter late by the
-// input latency and comes back late again by the output latency. The loop therefore sits
-// late against the patterns. Raise this until it locks; the boot log's
-// "Latency (in/out)" line is a good starting estimate (roughly the sum of the two).
-// Too far and the loop will start to sound early — that is the other side of the same
-// adjustment, not a different problem.
-~loopOffset    = 0.02;
+// input latency and comes back late again by the output latency — the full round trip.
+// The loop therefore sits that far late against the patterns, and this shifts the write
+// position back to cancel it. Too far and the loop sounds early: that is the other side
+// of the same adjustment, not a different problem.
+//
+// MEASURED on this H8 with tools/latency-measure.scd: 28.9 ms round trip, 0.1 ms spread
+// over five pings. Independently, 0.025 had been arrived at by ear — the two agree.
+// Re-measure after any change to the buffer size, the sample rate or the interface:
+//     "D:/livelooper/tools/latency-measure.scd".load;  ~measureLatency.(1);
+~loopOffset    = 0.029;
 
 // Loop buffers are allocated ONCE, at the size the slowest tempo you'll ever record at
 // needs — so hitting record never allocates and never stalls. Lower = longer buffers =
