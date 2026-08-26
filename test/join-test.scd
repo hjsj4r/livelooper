@@ -10,7 +10,7 @@
 //  Run it headless (no ZOOM H8 needed):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/join-test.scd
 //
-//  Expect: "17 passed, 0 failed".
+//  Expect: "23 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, t, sr;
@@ -102,9 +102,38 @@ s.waitForBoot({
                 ok.("fade-in ends full",      (1.0 ** 0.5) == 1);
                 ok.("fade-out ends silent",   ((1 - 1.0) ** 0.5) == 0);
 
-                "".postln;
-                ("======== " ++ pass ++ " passed, " ++ fail ++ " failed ========").postln;
-                fork { 0.5.wait; 0.exit };
+                // --- DISABLED ---
+                // ~xfadeSecs = 0 must be an EXACT bypass, not a very short fade: the
+                // take stops at the loop end, nothing is written past it, and the
+                // read head is the plain loop. This is the state to A/B against.
+                fork {
+                    var tailBefore = t[\xfFrames];
+                    "".postln; "--- JOIN DISABLED (~xfadeSecs = 0) ---".postln;
+                    ~trackClear.(t);
+                    ~xfadeSecs = 0;
+                    0.5.wait;
+                    ok.("the enabled run really had a tail", tailBefore > 0);
+                    ok.("xfadeFrames is now zero", ~xfadeFrames.() == 0);
+                    ~inj = Synth(\inject, addAction: \addToHead);
+                    t[\buf].zero;
+                    s.sync;
+                    ~trackRecord.(t);
+                    6.0.wait;
+                    ~inj.free;
+                    ok.("take still reached playing", t[\state] == \playing);
+                    ok.("no overlap tail is armed",   t[\xfFrames] == 0);
+                    ok.("loop length is unchanged",
+                        t[\loopFrames] == ~loopFramesFor.(2.0, 4));
+                    t[\buf].loadToFloatArray(t[\loopFrames], 8192, { |past|
+                        var pastPeak = past.abs.maxItem;
+                        ("        (past-the-end peak = " ++ pastPeak.round(0.001)
+                            ++ ", was " ++ tailBefore ++ " frames of signal)").postln;
+                        ok.("nothing recorded past the loop end", pastPeak < 0.01);
+                        "".postln;
+                        ("======== " ++ pass ++ " passed, " ++ fail ++ " failed ========").postln;
+                        fork { 0.5.wait; 0.exit };
+                    });
+                };
             });
         });
     };
