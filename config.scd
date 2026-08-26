@@ -82,7 +82,7 @@
 // 0 disables it entirely.
 //
 // Read when you hit RECORD, not continuously: change it, then re-record to hear it.
-~xfadeSecs  = 0.06;
+~xfadeSecs  = 0.015 ;
 // Shape. MEASURED on a real take: the two sides of the join are the same musical moment
 // one loop apart, so they are highly correlated and ADD rather than power-sum.
 //   0.5 (equal power) gave +3.0 dB across the join — an audible swell at the seam.
@@ -108,7 +108,7 @@
 // "Latency (in/out)" line is a good starting estimate (roughly the sum of the two).
 // Too far and the loop will start to sound early — that is the other side of the same
 // adjustment, not a different problem.
-~loopOffset    = 0.025;
+~loopOffset    = 0.02;
 
 // Loop buffers are allocated ONCE, at the size the slowest tempo you'll ever record at
 // needs — so hitting record never allocates and never stalls. Lower = longer buffers =

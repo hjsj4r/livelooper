@@ -97,6 +97,7 @@ sequence — map it rather than guessing:
 | `tools/sync-check.scd` | Diagnoses loop timing / tempo mismatches |
 | `tools/click-calibrate.scd` | Verifies the beat-grid anchor; `~clickOffset` should be 0 |
 | `tools/loop-inspect.scd` | Reads a recorded loop back and finds holes in it |
+| `tools/latency-measure.scd` | Measures the audio round trip, for `~loopOffset` |
 | `test/midi-test.scd` | Regression test for the MIDI control surface |
 | `test/panic-test.scd`  | Regression test for Ctrl+. recovery (see below) |
 | `test/looper-test.scd` | Regression test for the record path + signal path |
