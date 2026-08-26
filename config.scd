@@ -72,8 +72,17 @@
 // Recording runs on past the end of the loop by this much, and that extra tail is
 // crossfaded back over the start — so the join is a blend rather than a butt splice.
 // The overlap sits at the punch-in point, which is exactly where the seam is.
+//
+// Short is the point. The two sides of the join are a whole loop apart musically, so a
+// long overlap is heard as a flam — you notice the crossfade instead of the splice it
+// was hiding. Ladder, if you want to move it:
+//     0.005 - 0.015   removes the click, otherwise inaudible
+//     0.02  - 0.04    also smooths a transient sitting on the seam
+//     0.06  +         starts to read as a blend, then as a flam      <- trying this
 // 0 disables it entirely.
-~xfadeSecs  = 0.12;
+//
+// Read when you hit RECORD, not continuously: change it, then re-record to hear it.
+~xfadeSecs  = 0.06;
 // Shape. 0.5 = equal POWER (constant loudness — the usual choice, and what a butt
 // splice most obviously lacks). 1.0 = equal GAIN, linear, better when the two sides are
 // near-identical material. Above 1 the join gets slower and more gradual.
