@@ -103,7 +103,7 @@ sequence — map it rather than guessing:
 | `test/dashboard-test.scd` | Regression test for the dashboard message rate |
 | `test/stereo-test.scd` | Regression test for stereo (two-input) tracks |
 | `test/fx-test.scd` | Regression test for the per-track FX chain |
-| `test/join-test.scd` | Regression test for loop length + the crossfaded join |
+| `test/join-test.scd` | Regression test for loop length + the head fade and tail |
 
 ## Roadmap
 
@@ -200,7 +200,7 @@ $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/nav-test.scd         # 29 passed
 & $sc -D d:/livelooper/test/stereo-test.scd      # 12 passed
 & $sc -D d:/livelooper/test/fx-test.scd          # 19 passed
-& $sc -D d:/livelooper/test/join-test.scd        # 23 passed
+& $sc -D d:/livelooper/test/join-test.scd        # 36 passed
 ```
 
 None of them needs the H8, and **they're safe to run while your rig is booted** — each
@@ -209,6 +209,41 @@ seconds rather than minutes.
 
 > Note: re-evaluating `looper.scd` **does** clear the loops (buffers are freed to avoid
 > leaking them). Reloading a file is an authoring action; `Ctrl+.` is the live one.
+
+## The loop join
+
+Where a loop wraps, two things can go wrong, and they are not the same problem:
+
+| | Symptom | Knob |
+|---|---|---|
+| **Head** | a click at the seam | `~headFadeSecs` |
+| **Tail** | a cymbal or ringing note cut dead | `~tailSecs` |
+
+They want opposite things, which is why one number could not serve both.
+
+**`~headFadeSecs`** (default 3 ms) is a fade-in on the loop start, there only to remove
+the step that clicks. It has to stay well under an attack transient (10-50 ms) or a hit
+on beat 1 is heard arriving soft — that is what "the join is too long" was. If there *is*
+a hit on the 1 you can set it to `0`: a click coincident with a loud attack is masked and
+inaudible anyway.
+
+**`~tailSecs`** (default 0.5 s) keeps recording past the loop end, and plays that extra
+audio back **added on top** of the loop start, decaying over its own length. It is not a
+second copy of the start — `buf[frames]` is literally the sample after `buf[frames-1]`,
+so the tail is the genuine continuation of the take. A crash rings on into the next
+repetition exactly as it would if a drummer repeated the phrase.
+
+Because the tail is a continuation rather than a duplicate, nothing has to sum to unity,
+so there is no equal-power/equal-gain question left to get wrong. `~tailCurve` below 1
+holds the tail near full early and preserves the natural shape of the decay.
+
+> **The one catch:** a long tail only sounds right if what happens past the loop point is
+> *decay*. Keep playing through it and the tail holds your performance of the next
+> downbeat, landing on top of the recorded one — a real flam. Shorten `~tailSecs` on parts
+> you play continuously.
+
+All three are read when you hit **record**, so change them and re-record to hear it.
+`~headFadeSecs = 0; ~tailSecs = 0;` is an exact bypass — a butt splice, verified.
 
 ## Click controls
 

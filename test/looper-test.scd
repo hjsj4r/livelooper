@@ -53,7 +53,7 @@ s.waitForBoot({
         ok.("buffer is mono",            t[\buf].numChannels == 1);
         // sized for the LONGEST selectable loop at the slowest tempo, plus the join tail
         ok.("sized for the longest loop", t[\bufFrames]
-            == (~loopFramesFor.(~minCps, ~maxLoopCycles) + ~xfadeFrames.()));
+            == (~loopFramesFor.(~minCps, ~maxLoopCycles) + ~tailFrames.()));
         ok.("track starts idle",         t[\state] == \idle);
 
         // Deterministic clock: set the tempo directly rather than racing OSC.
@@ -113,7 +113,7 @@ s.waitForBoot({
         ~lastCycle = 0; ~lastEventTime = Main.elapsedTime;
         ~trackRecord.(t);
         // clamps to what is left after reserving the join tail
-        ok.("clamped to buffer length",  t[\loopFrames] == (t[\bufFrames] - t[\xfFrames]));
+        ok.("clamped to buffer length",  t[\loopFrames] == (t[\bufFrames] - t[\tailFrames]));
         ok.("did not exceed the buffer", t[\loopFrames] <= t[\bufFrames]);
         ~trackClear.(t);                 // cancel the pending take
         0.5.wait;

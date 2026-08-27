@@ -66,7 +66,7 @@ s.waitForBoot({
         // allocates. (Full record-path coverage lives in test/looper-test.scd.)
         ok.("loop buffers are mono",     ~tracks.every { |t| t[\buf].numChannels == 1 });
         ok.("buffers sized for the longest loop", ~tracks.every { |t|
-            t[\bufFrames] == (~loopFramesFor.(~minCps, ~maxLoopCycles) + ~xfadeFrames.()) });
+            t[\bufFrames] == (~loopFramesFor.(~minCps, ~maxLoopCycles) + ~tailFrames.()) });
 
         // NOTE: OSC floats are float32, so only use exactly-representable test values
         // (0.75, 0.25) — 0.4 round-trips to 0.4000000059604645 and would fail on ==.

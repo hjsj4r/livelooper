@@ -68,28 +68,46 @@
 ~loopCycleChoices = [4, 8];  // what the length control steps through
 ~maxLoopCycles    = 8;       // buffers are sized for THIS, so it must cover the choices
 
-// ── Loop join (crossfade) ───────────────────────────────────
-// Recording runs on past the end of the loop by this much, and that extra tail is
-// crossfaded back over the start — so the join is a blend rather than a butt splice.
-// The overlap sits at the punch-in point, which is exactly where the seam is.
+// ── Loop join: head fade + tail ─────────────────────────────
+// Two different problems, so two different knobs. They used to be one (~xfadeSecs) and
+// no single value could be right for both.
 //
-// Short is the point. The two sides of the join are a whole loop apart musically, so a
-// long overlap is heard as a flam — you notice the crossfade instead of the splice it
-// was hiding. Ladder, if you want to move it:
-//     0.005 - 0.015   removes the click, otherwise inaudible
-//     0.02  - 0.04    also smooths a transient sitting on the seam
-//     0.06  +         starts to read as a blend, then as a flam
-// 0 disables it entirely — an exact bypass (verified in test/join-test.scd)  <- set here
+// HEAD FADE — a few milliseconds at the loop start, there only to remove the step that
+// makes the seam click. Keep it well under an attack transient (10-50 ms) or a hit on
+// beat 1 is heard arriving soft: that is what "the join is too long" was.
+//     0        no fade. Fine when there IS a hit on the 1 — a click coincident with a
+//              loud attack is masked and you cannot hear it anyway.
+//     0.002 - 0.005   de-clicks a quiet seam, inaudible on a loud one      <- set here
+//     0.02  +         you are now softening attacks
+~headFadeSecs = 0.003;
+
+// TAIL — recording keeps running past the loop end by this much, and that extra audio is
+// played back ADDED on top of the loop start, decaying away over its own length. This is
+// what carries a cymbal or a ringing note across the seam instead of cutting it dead.
 //
-// Read when you hit RECORD, not continuously: change it, then re-record to hear it.
-~xfadeSecs  = 0;
-// Shape. MEASURED on a real take: the two sides of the join are the same musical moment
-// one loop apart, so they are highly correlated and ADD rather than power-sum.
-//   0.5 (equal power) gave +3.0 dB across the join — an audible swell at the seam.
-//   1.0 (equal gain, linear) gave 0.0 dB — unity, which is what this material wants.
-// Equal power is the right default for UNcorrelated sources; it is the wrong one here.
-// Above 1 the join gets slower and more gradual.
-~xfadeCurve = 1.0;
+// It is not a second copy of the loop start: buf[frames] is literally the sample after
+// buf[frames-1], so the tail is the genuine continuation of the take. That is also why
+// there is no equal-power/equal-gain question here any more — the head plays at full
+// gain and the tail is a ghost on top, so nothing has to sum to unity.
+//     0        off, a butt splice
+//     0.1 - 0.3       covers a snare ring or a short room tail
+//     0.4 - 0.8       covers a crash or a big reverb                       <- set here
+//     1.5 +           only if you are recording something genuinely long
+//
+// THE ONE CATCH: this only sounds right if what happens past the loop point is DECAY.
+// Play new notes through the loop point and the tail holds your performance of the next
+// downbeat, landing on top of the recorded one — a real flam. The fade-out softens it,
+// and per-track lengths are the escape hatch: long on overheads, short on a part you
+// play continuously.
+~tailSecs  = 0.5;
+// Tail decay shape. Below 1 holds the tail near full early and preserves the natural
+// shape of the decay; 1 is a straight line; above 1 drops it away quickly.
+~tailCurve = 0.5;
+
+// Buffers are sized for ~tailSecs on top of the longest loop, and a take caps the tail
+// at a quarter of the buffer so a long tail can never eat the loop itself.
+//
+// All three are read when you hit RECORD, not continuously: change them, then re-record.
 
 // Which cycle boundaries a recording is allowed to START on. 1 = the next measure, which
 // is almost always what you want when you hit record.
