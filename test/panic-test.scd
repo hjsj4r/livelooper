@@ -9,7 +9,7 @@
 //  Run it headless (does NOT need the ZOOM H8 — boots the system default device):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/panic-test.scd
 //
-//  Expect: "24 passed, 0 failed". Re-run after touching looper/click/dashboard.
+//  Expect: "26 passed, 0 failed". Re-run after touching looper/click/dashboard.
 // ============================================================
 (
 var pass = 0, fail = 0, ok, self, synthBefore;
@@ -86,13 +86,18 @@ s.waitForBoot({
         ok.("grid anchored to sounding time, not arrival",
             (~lastEventTime - Main.elapsedTime) > 0.3);
 
-        // the whole point of the panic fix: these must be permanent, or CmdPeriod frees
-        // them. Tempo tracking no longer needs it — receiveAction is a plain ivar on
+        // the whole point of the panic fix: this must be permanent, or CmdPeriod frees
+        // it. Tempo tracking no longer needs it — receiveAction is a plain ivar on
         // ~dirt, and SuperDirt .fix'es the OSCFunc that calls it.
-        ok.("looperPads is permanent",  MIDIdef.all[\looperPads].permanent);
-        ok.("looperKnobs is permanent", MIDIdef.all[\looperKnobs].permanent);
-        ok.("clickPedal is permanent",  MIDIdef.all[\clickPedal].permanent);
         ok.("cmdFocus is permanent",    OSCdef.all[\cmdFocus].permanent);
+
+        // The MPK map is gone. Its responders were .fix'ed, which means they survive both
+        // Ctrl+. AND a file reload — so loading looper.scd has to free them by key or a
+        // long-running session would keep firing a mapping that no longer exists in the
+        // source. Absence here is what proves the removal actually took effect.
+        [\looperPads, \looperKnobs, \clickPedal, \midiPrint, \midiCcPrint].do { |k|
+            ok.("no stale MIDIdef: " ++ k, MIDIdef.all[k].isNil);
+        };
 
         // Simulate a track mid-performance: a recorded loop, playing, on a known downbeat.
         synthBefore = ~tracks[0][\synth].nodeID;
@@ -113,10 +118,7 @@ s.waitForBoot({
         self.sendMsg('/dirt/play', "s", "bd", "cps", 0.25, "cycle", 99.0, "orbit", 0);
         0.3.wait;
         ok.("tempo tracking SURVIVED", ~cps == 0.25);
-        ok.("looperPads still registered",  MIDIdef.all[\looperPads].notNil
-            and: { MIDIdef.all[\looperPads].permanent });
-        ok.("looperKnobs still registered", MIDIdef.all[\looperKnobs].notNil
-            and: { MIDIdef.all[\looperKnobs].permanent });
+        ok.("panic did not resurrect MIDI", MIDIdef.all[\looperPads].isNil);
 
         self.sendMsg('/cmd/focus', 1);
         0.3.wait;

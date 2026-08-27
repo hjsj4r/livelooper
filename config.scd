@@ -112,7 +112,7 @@
 // over five pings. Independently, 0.025 had been arrived at by ear — the two agree.
 // Re-measure after any change to the buffer size, the sample rate or the interface:
 //     "D:/livelooper/tools/latency-measure.scd".load;  ~measureLatency.(1);
-~loopOffset    = 0.029;
+~loopOffset    = 0.035;
 
 // Loop buffers are allocated ONCE, at the size the slowest tempo you'll ever record at
 // needs — so hitting record never allocates and never stalls. Lower = longer buffers =
@@ -139,45 +139,25 @@
 ~fxDriveMax    = 1.0;        // how far the R2 trigger can push the drive (0..1)
 
 
-// ── MIDI control surface (AKAI MPK mini) ────────────────────
-// The MPK drives the loopers and sends on channel 0. The SPD-SX PRO sends on channel 9,
-// so with ~midiChan = 0 it is inert here and stays purely an instrument.
-~midiChan = 0;
-
-// Captured with tools/midi-monitor.scd — re-run it if you move the MPK's PAD BANK
-// button, because the pads send different notes per bank.
-//   bank A = notes 16..23      bank B = notes 32..39 (fixed velocity 127)
-//
-// These three act on the SELECTED track (~focus), so they scale to any number of tracks.
-// Record and overdub are separate on purpose: record punches a fresh take over a playing
-// loop without clearing it first, which a single cycling button cannot do.
-~padRecord  = 36;            // pad 5 — start a fresh take on the selected track
-~padOverdub = 37;            // pad 6 — layer onto it / stop layering
-~padClear   = 38;            // pad 7 — stop and clear it
-
-// Track level, one knob per track, in track order. The MPK's 8 knobs are CC 48, 49, 50,
-// 51, 64, 65, 66, 67 — assumed to run left-to-right in that order. If a knob moves the
-// wrong track, check the real order with tools/midi-monitor.scd and reorder this list.
-~knobFader = [48, 49, 50, 51, 64, 65, 66];
-
-// Toggles the click. nil = no MIDI control (use the dashboard button, or ~clickOn).
-// Only ever put a PAD number here: on channel 0 the MPK's KEYBOARD sends notes too, and
-// a keyboard note used as a control would fire every time you play it. Pads 35 and 39
-// are unassigned above if you want one.
-~clickPedal = nil;
-~midiDebug  = false;         // true = post every MIDI message. Use it to discover pedal
-                             // numbers; leave it off for a show (posting on every pad
-                             // hit stalls the IDE).
-
 
 // ── Click ───────────────────────────────────────────────────
 ~clickDiv    = 4;            // clicks per cycle (4 = quarter notes in 4/4)
 ~clickAmp    = 0.5;
-// Phase trim vs the music, in seconds. Read live on every beat, so you can tweak it in
-// the interpreter and hear it immediately — then write the value back here.
-// 0 is now correct by construction: the beat grid is anchored to when events SOUND, and
-// the click hands the server its own lead, so there is no systematic error left to
-// cancel. Treat any non-zero value as taste (or as a sign something else is off).
+// Phase trim of the CLICK against the music, in seconds. Read live on every beat, so you
+// can tweak it in the interpreter and hear it immediately — then write the value back.
+// 0 is correct by construction: the beat grid is anchored to when events SOUND, and the
+// click hands the server its own lead, so there is no systematic error left to cancel.
+//
+// DO NOT use this to compensate the round trip — that is ~loopOffset's job, and they are
+// not interchangeable. Pulling the click early WOULD make you play early enough to land
+// on the grid, but it moves something you HEAR: the click would then be ~29 ms out of
+// time with the Tidal patterns, which is a flam you would be playing against all night.
+// ~loopOffset fixes the same error by moving the RECORDING, which nobody hears happen.
+// Splitting the correction between the two only buys half of that flam for nothing.
+//
+// Keep the two questions separate, or neither can be tuned:
+//     ~clickOffset — is the click in time with the patterns?
+//     ~loopOffset  — is my recording in time with what I heard?
 ~clickOffset = 0.0;
 
 

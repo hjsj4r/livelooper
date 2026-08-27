@@ -2,12 +2,12 @@
 //  LIVE LOOPER  ·  looper.scd   (multitrack)
 //  Loaded by startup.scd (REGION 2).
 //  One independent loop per H8 input: record / overdub / clear + a fader each.
-//  Controlled from the dashboard; the SPD pedals drive the FOCUSED track.
+//  Controlled from the dashboard and the DualSense; both act on the SELECTED track.
 // ============================================================
 
 // ── Settings come from config.scd ───────────────────────────
 // (~trackInputs, ~numLoopCycles, ~loopOffset, ~monLevel, ~restoreLoopsOnPanic,
-//  ~midiChan, ~mainPedal, ~clearPedal, ~midiDebug)
+//  ~xfadeSecs, ~xfadeCurve, ~numLoopCycles, ~minCps, ~fx*)
 ~trackInputs ?? {
     Error("looper.scd: config.scd has not been loaded. Evaluate startup.scd instead.").throw
 };
@@ -517,72 +517,17 @@ fork {
         ++ mb ++ " MB total").postln;
 };
 
-// ── MIDI — one pad per track, no focus mode ─────────────────
-// connectAll is safe to re-run: it disconnects first when already initialised, so
-// reloading this file re-scans for newly plugged gear without duplicating events.
-MIDIIn.connectAll;
-
-// Resolve a MIDI source id to something human — essential once more than one controller
-// is plugged in, since note numbers collide across devices.
-~midiDevName = { |src|
-    var ep = MIDIClient.sources !? { MIDIClient.sources.detect { |e| e.uid == src } };
-    ep !? { ep.device ++ " / " ++ ep.name } ? ("uid " ++ src);
+// ── MIDI ────────────────────────────────────────────────────
+// There is none, deliberately. The MPK mini map was removed: everything is driven from
+// the DualSense or the mouse. One control surface with one obvious mapping beats two
+// that can disagree about which track is selected — and the MPK's pads sat on channel 0
+// alongside its keyboard, which was a standing trap.
+//
+// MIDIdefs installed with .fix survive both Ctrl+. and a file reload, so a session that
+// had ever run the old map would keep firing it. Free them by key; a no-op on a fresh
+// boot, and the only way to make reloading this file actually remove the mapping.
+[\midiPrint, \midiCcPrint, \looperPads, \looperKnobs, \looperPedal].do { |k|
+    MIDIdef.all[k] !? { |d| d.free };
 };
 
-// ~midiDebug (config.scd) prints every incoming message. Leave it OFF for a show —
-// posting on every pad hit stalls the IDE, and the SPD sends a lot of them.
-// For mapping a new controller use tools/midi-monitor.scd instead: it also prints a
-// summary table of everything it saw.
-MIDIdef.noteOn(\midiPrint, { |vel, note, chan, src|
-    if (~midiDebug) {
-        ("MIDI note=" ++ note ++ " vel=" ++ vel ++ " ch=" ++ chan
-            ++ "   [" ++ ~midiDevName.(src) ++ "]").postln;
-    };
-}).fix;
-MIDIdef.cc(\midiCcPrint, { |val, num, chan, src|
-    if (~midiDebug) {
-        ("MIDI CC=" ++ num ++ " val=" ++ val ++ " ch=" ++ chan
-            ++ "   [" ++ ~midiDevName.(src) ++ "]").postln;
-    };
-}).fix;
-
-// The old single-pedal handler drove whichever track was FOCUSED. It is gone, but a
-// running session keeps MIDIdefs by key, so free it explicitly — otherwise reloading
-// this file would leave it firing alongside the new map. That matters more than usual
-// here: its notes were 60/61, which on channel 0 are MPK KEYBOARD keys, so playing the
-// keys would silently start and clear recordings.
-MIDIdef.all[\looperPedal] !? { |d| d.free };
-
-// Three pads, one job each, always acting on the SELECTED track (~focus, set from the
-// dashboard or the controller). Three fixed pads scale to any number of tracks, where a
-// pad per track does not — and separating record from overdub is what lets you punch a
-// new take over a playing loop without clearing it first.
-// .fix keeps them alive through Ctrl+.; without it a panic stop leaves you with no way
-// to drive the loopers until you re-evaluate the file.
-MIDIdef.noteOn(\looperPads, { |vel, note, chan|
-    // Silently ignored when the selection is on a mixer item rather than a track —
-    // there is no such thing as recording the click.
-    if ((chan == ~midiChan) and: { ~navIsTrack.() }) {
-        var t = ~tracks[~focus ? 0];
-        if (note == ~padRecord)  { ~trackRecord.(t) };
-        if (note == ~padOverdub) { ~trackOverdub.(t) };
-        if (note == ~padClear)   { ~trackClear.(t) };
-    };
-}).fix;
-
-// Knobs are absolute, not soft-takeover: the first move jumps the fader to wherever the
-// knob physically sits. Predictable, and there is no way to read a knob's position until
-// it is touched.
-MIDIdef.cc(\looperKnobs, { |val, num, chan|
-    if (chan == ~midiChan) {
-        ~knobFader !? { |m|
-            m.indexOf(num) !? { |i| ~tracks[i] !? { |t| ~trackLevel.(t, val / 127) } };
-        };
-    };
-}).fix;
-
-("=== looper.scd loaded — " ++ ~trackInputs.size ++ " tracks"
-    ++ " | MIDI ch " ++ ~midiChan
-    ++ " | rec " ++ ~padRecord ++ " dub " ++ ~padOverdub ++ " clr " ++ ~padClear
-    ++ " | fader cc " ++ ~knobFader
-    ++ " ===").postln;
+("=== looper.scd loaded — " ++ ~trackInputs.size ++ " tracks ===").postln;

@@ -9,7 +9,7 @@
 // ============================================================
 
 // ── Settings come from config.scd ───────────────────────────
-// (~clickDiv, ~clickAmp, ~clickOffset, ~clickPedal, ~midiChan)
+// (~clickDiv, ~clickAmp, ~clickOffset)
 // ~clickOffset is read LIVE on every beat, so you can tweak it in the interpreter and
 // hear it immediately — bigger = click later. Write the value you land on back to config.
 ~clickDiv ?? {
@@ -17,7 +17,7 @@
 };
 
 // ── Runtime state (not config — survives a reload) ──────────
-~clickOn = ~clickOn ? false;      // start muted — pedal or dashboard toggles it
+~clickOn = ~clickOn ? false;      // start muted — dashboard or OPTIONS toggles it
 
 // ── Click sound ─────────────────────────────────────────────
 // accent = 1 on the cycle downbeat (higher + louder). RIGHT channel only.
@@ -78,16 +78,10 @@ SynthDef(\click, { |accent = 0, amp = 0.5|
 CmdPeriod.add(~startClickTask);
 ~startClickTask.();
 
-// ── Pedal toggle ────────────────────────────────────────────
-// .fix — otherwise Ctrl+. frees this responder and the click pedal goes dead.
-// ~clickPedal = nil disables MIDI control of the click entirely, which is the safe
-// default on a channel shared with a keyboard: any note number chosen here would also
-// fire whenever that key is played.
-MIDIdef.noteOn(\clickPedal, { |vel, note, chan|
-    if (~clickPedal.notNil and: { chan == ~midiChan } and: { note == ~clickPedal }) {
-        ~clickOn = ~clickOn.not;
-        ("Click " ++ (~clickOn.if({ "ON" }, { "OFF" }))).postln;
-    };
-}).fix;
+// ── No MIDI ─────────────────────────────────────────────────
+// The click is toggled from the dashboard button or OPTIONS on the DualSense. The MPK
+// pedal responder is gone; .fix kept it alive through Ctrl+. and through a reload, so
+// free it by key or a session that once had it would keep toggling the click.
+MIDIdef.all[\clickPedal] !? { |d| d.free };
 
-"=== click.scd loaded — pedal 62 toggles | ~clickDiv=4 | RIGHT channel ===".postln;
+"=== click.scd loaded — OPTIONS / dashboard toggles | ~clickDiv=4 | RIGHT channel ===".postln;

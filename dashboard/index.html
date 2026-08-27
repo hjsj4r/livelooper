@@ -36,6 +36,7 @@
   .sweep { height: 6px; background: #10141b; border-radius: 3px; overflow: hidden; }
   .fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), #7ec2ff); }
   .clickvol { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  .clickvol .dim { flex: 0 0 128px; }
   .clickvol input { flex: 1; accent-color: var(--accent); }
   /* the mixer levels are selectable too, so they show the same focus marker as a track */
   .mixitem { position: relative; border: 1px solid transparent; border-radius: 8px; }
@@ -126,22 +127,27 @@
     </div>
     <div class="beats" id="beats"></div>
     <div class="sweep"><div class="fill" id="fill"></div></div>
+  </div>
+
+  <div class="panel">
+    <div class="label">Tracks (click a strip to select it)</div>
+    <div class="tracks" id="tracks"></div>
+  </div>
+
+  <!-- The two mixer levels are selectable with the stick exactly like a track, so they
+       sit AFTER the tracks: the list runs tracks -> tidal -> click, and the highlight has
+       to travel DOWN the screen in the same order the stick steps through it. Moving
+       these panels means reordering ~navName/~navAdjust in looper.scd to match. -->
+  <div class="panel">
+    <div class="label">Mixer</div>
+    <div class="clickvol mixitem" id="mixTidal">
+      <span class="dim">tidal patterns level</span>
+      <input type="range" id="dirtFader" min="0" max="1" step="0.01" value="1">
+    </div>
     <div class="clickvol mixitem" id="mixClick">
       <span class="dim">click level</span>
       <input type="range" id="clickAmp" min="0" max="1" step="0.01" value="0.5">
     </div>
-  </div>
-
-  <!-- Both mixer levels are selectable with the stick, same as a track, so they get the
-       same focus treatment. -->
-  <div class="panel mixitem" id="mixTidal">
-    <div class="label">Tidal patterns level</div>
-    <input type="range" id="dirtFader" min="0" max="1" step="0.01" value="1" style="width:100%;accent-color:var(--accent)">
-  </div>
-
-  <div class="panel">
-    <div class="label">Tracks (click a track's name to focus it for the pedals)</div>
-    <div class="tracks" id="tracks"></div>
   </div>
 
   <div class="panel">
@@ -187,15 +193,17 @@
         <circle class="off" cx="186" cy="88" r="9"/>
         <!-- sticks -->
         <circle class="btn2" cx="106" cy="100" r="11"/>
-        <circle class="off"  cx="154" cy="100" r="11"/>
-        <text class="lbl" x="86" y="124">left stick</text>
+        <circle class="btn2" cx="154" cy="100" r="11"/>
+        <text class="lbl" x="82"  y="124">select / level</text>
+        <text class="lbl" x="140" y="124">scroll</text>
         <!-- options -->
         <circle class="btn" cx="160" cy="52" r="5"/>
         <text class="lbl" x="150" y="44">OPTIONS</text>
       </svg>
       <div class="padkey">
-        <div><b>stick ↑↓</b><span>select — tracks, then tidal &amp; click levels</span></div>
-        <div><b>stick ←→</b><span>volume of whatever is selected</span></div>
+        <div><b>L stick ↑↓</b><span>select — tracks, then tidal &amp; click levels</span></div>
+        <div><b>L stick ←→</b><span>volume of whatever is selected</span></div>
+        <div><b>R stick ↑↓</b><span>scroll the page</span></div>
         <div><b><span class="glyph">○</span> Circle</b><span>record</span></div>
         <div><b><span class="glyph">□</span> Square</b><span>overdub</span></div>
         <div><b><span class="glyph">△</span> Triangle</b><span>clear</span></div>
@@ -265,7 +273,7 @@ function buildTracks(args) {
       `<div class="fxbar" title="drive (R2)"><i></i></div>` +
       `<button class="rec">● Rec</button><button class="dub">＋ Dub</button>` +
       `<button class="clr">Clear</button>`;
-    // Clicking anywhere on the strip selects it — the pads act on the selection, so
+    // Clicking anywhere on the strip selects it — the controller acts on the selection, so
     // selecting has to be as easy as possible.
     el.onclick = () => cmd('/cmd/focus', [idx]);
     // stopPropagation: the strip itself selects on click, and changing the length
@@ -299,14 +307,23 @@ function updateTracks(states) {
 // The selection runs past the tracks onto the two mixer items, so the stick can reach
 // every fader. Indices: 0..n-1 tracks, then n = tidal level, n + 1 = click level.
 function setFocus(idx) {
+  const moved = idx !== focusIdx;
   focusIdx = idx;
   const n = $('tracks').children.length;
   [...$('tracks').children].forEach((el, i) => el.classList.toggle('focus', i === focusIdx));
   $('mixTidal').classList.toggle('focus', focusIdx === n);
   $('mixClick').classList.toggle('focus', focusIdx === n + 1);
+  // Follow the selection, but only when it actually moved and only as far as it has to:
+  // 'nearest' is a no-op while the selected item is already visible, so this never
+  // fights the right stick or yanks the page while you are reading something else.
+  if (moved) {
+    const el = focusIdx < n ? $('tracks').children[focusIdx]
+             : (focusIdx === n ? $('mixTidal') : $('mixClick'));
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
 }
 
-// Fader positions pushed from SC — a hardware knob on the MPK moves these.
+// Fader positions pushed from SC — the controller stick moves these.
 // While you're dragging a slider here, your own move round-trips through SC and comes
 // straight back; without a guard a slow round-trip would yank the handle back to a value
 // you've already moved past. So ignore remote updates for a slider you just touched.
@@ -394,8 +411,10 @@ let lastDrive = -1;
 // fader takes a bit over a second at full deflection.
 const ADJUST_MS = 50, ADJUST_RATE = 0.045;
 let lastAdjust = 0;
-const AXIS_X = 0, AXIS_Y = 1;        // left stick
+const AXIS_X = 0, AXIS_Y = 1;        // left stick — select and level
+const AXIS_RY = 3;                   // right stick vertical — scrolls the page
 const AXIS_ON = 0.5, AXIS_OFF = 0.3; // hysteresis: must fall back below OFF to re-fire
+const SCROLL_RATE = 16;              // px per frame at full deflection
 
 let padPrev = {}, padAxis = 0, padWarned = false;
 
@@ -435,6 +454,14 @@ function pollGamepad() {
       lastAdjust = now;
       cmd('/cmd/navAdjust', [amount * ADJUST_RATE]);
     }
+  }
+
+  // Right stick scrolls. The page is taller than a screen once you have seven tracks
+  // plus the legend and the sample browser, and reaching for the mouse mid-set is the
+  // thing the controller exists to avoid. Purely local — no OSC, so holding it is free.
+  const ry = gp.axes[AXIS_RY] || 0;
+  if (Math.abs(ry) > AXIS_OFF) {
+    window.scrollBy(0, Math.sign(ry) * (Math.abs(ry) - AXIS_OFF) / (1 - AXIS_OFF) * SCROLL_RATE);
   }
 
   if (padEdge('clickTg', b(PAD.clickTg).pressed)) cmd('/cmd/clickToggle', []);

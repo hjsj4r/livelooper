@@ -14,7 +14,7 @@ TidalCycles (Haskell, code)  ──OSC──►  SuperCollider
                                          ├─ SuperDirt   (drums / samples)
                                          ├─ Loopers     (guitar, cycle-synced)
                                          ├─ Click       (panned RIGHT — L/R hack)
-                                         └─ MIDI in     (SPD-SX PRO pedals)
+                                         └─ Dashboard   (DualSense + browser UI)
                                        → ZOOM H8:  L = music → PA (mono cable)
                                                    R = click → your headphones
 ```
@@ -47,7 +47,7 @@ Quick audio check:
 ## Configuration
 
 **Everything you'd change for a different rig lives in `config.scd`** — audio device,
-sample rate, channel counts, track inputs, MIDI channel and pedal notes, click tuning,
+sample rate, channel counts, track inputs, loop length and join, click tuning,
 ports. No other file should need editing to move to new hardware.
 
 The project folder path is derived from `startup.scd`'s own location, so you can move or
@@ -55,7 +55,7 @@ clone the folder anywhere.
 
 | Change | Then |
 |---|---|
-| Track inputs, pedals, click, loop length | re-evaluate `startup.scd` |
+| Track inputs, click, loop length and join | re-evaluate `startup.scd` |
 | Audio device, sample rate, channel counts | `s.reboot;` then re-evaluate `startup.scd` |
 | Added a sample bank to `samples/` | `~reloadSamples.();` |
 | Need a Dirt-Samples bank you trimmed out | `~loadBanks.([\tabla]);` — no restart |
@@ -83,22 +83,21 @@ sequence — map it rather than guessing:
 
 | File | Purpose |
 |---|---|
-| `config.scd`   | **All settings** — device, tracks, pedals, click, ports |
+| `config.scd`   | **All settings** — device, tracks, loop join, click, ports |
 | `startup.scd`  | One-evaluation boot: server + SuperDirt + everything else |
-| `looper.scd`   | Multitrack loopers (one per input) + faders + MIDI |
-| `click.scd`    | Tempo-locked click, right channel, pedal-toggle |
+| `looper.scd`   | Multitrack loopers (one per input) + faders + FX |
+| `click.scd`    | Tempo-locked click, right channel |
 | `dashboard.scd`| Streams state to / takes commands from the web dashboard |
 | `dashboard/server.js` | Pure-Node bridge (SC ↔ browser). Run: `node server.js` |
 | `dashboard/index.html`| The web dashboard UI |
 | `BootTidal.hs` | Tidal boot (SuperDirt target, tuned latency) |
 | `samples/`     | Your custom sample banks |
 | `tools/input-scan.scd` | Maps a physical jack to its SC input index |
-| `tools/midi-monitor.scd` | Shows what a controller sends, per device, with a summary table |
 | `tools/sync-check.scd` | Diagnoses loop timing / tempo mismatches |
 | `tools/click-calibrate.scd` | Verifies the beat-grid anchor; `~clickOffset` should be 0 |
 | `tools/loop-inspect.scd` | Reads a recorded loop back and finds holes in it |
 | `tools/latency-measure.scd` | Measures the audio round trip, for `~loopOffset` |
-| `test/midi-test.scd` | Regression test for the MIDI control surface |
+| `test/nav-test.scd` | Regression test for selection + level control |
 | `test/panic-test.scd`  | Regression test for Ctrl+. recovery (see below) |
 | `test/looper-test.scd` | Regression test for the record path + signal path |
 | `test/dashboard-test.scd` | Regression test for the dashboard message rate |
@@ -110,7 +109,7 @@ sequence — map it rather than guessing:
 
 - [x] **1. Scaffold + consolidated `startup.scd`** (boot + SuperDirt + samples)
 - [x] **2. Looper in `looper.scd`** + clear-during-record fix (generation token)
-- [x] **3. Click in `click.scd`** — tempo-locked, right channel, pedal-toggle
+- [x] **3. Click in `click.scd`** — tempo-locked, right channel
 - [x] **5. Input mixer** — record the sum of enabled H8 inputs (`~setInput.(ch, 1/0)`)
 - [x] **6. TidalCycles** as sequencer (BootTidal.hs, oLatency tuned, click synced)
 - [x] **7. Ctrl+. survival** — panic stop rebuilds the rig instead of ending the set,
@@ -132,7 +131,7 @@ sequence — map it rather than guessing:
         the two-region dance and the fixed-delay timing hacks, and a missing audio device
         now fails with a readable error instead of hanging.
 - [x] **4. UI dashboard** — metronome, sample browser + preview, and **multitrack strips**
-        (per-track record/overdub/clear + fader, click a track name to focus it for the pedals).
+        (per-track record/overdub/clear + fader, click a strip to select it).
         Tracks configured in `looper.scd` via `~trackInputs`. Optional next: per-track waveforms.
 
 ## How loops line up
@@ -169,7 +168,7 @@ point. If a loop ever sounds like it has a gap, that is what to suspect:
 
 `Ctrl+.` (CmdPeriod) is SuperCollider's panic stop. It clears both clocks, frees every
 non-permanent OSC/MIDI responder, and frees **every node on the server**. Left alone,
-that means one panic stop ends the set: no pedals, no click, no dashboard, no loopers,
+that means one panic stop ends the set: no click, no dashboard, no loopers,
 and Tidal silent for good (SuperDirt rebuilds its orbits, but they feed a bus whose
 master fader is gone).
 
@@ -177,7 +176,7 @@ The rig now registers everything it needs to come back:
 
 | Mechanism | Brings back |
 |---|---|
-| `.fix` on every responder | pedals, tempo tracking, dashboard commands |
+| `.fix` on every responder | tempo tracking, dashboard commands |
 | `ServerTree` hooks | Tidal master fader, looper track synths |
 | `CmdPeriod` hooks | click scheduler, dashboard state streamer |
 
@@ -195,11 +194,13 @@ the system default device):
 
 ```powershell
 $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
-& $sc -D d:/livelooper/test/panic-test.scd       # 25 passed
+& $sc -D d:/livelooper/test/panic-test.scd       # 26 passed
 & $sc -D d:/livelooper/test/looper-test.scd      # 33 passed
 & $sc -D d:/livelooper/test/dashboard-test.scd   # 30 passed
-& $sc -D d:/livelooper/test/midi-test.scd        # 38 passed
+& $sc -D d:/livelooper/test/nav-test.scd         # 29 passed
 & $sc -D d:/livelooper/test/stereo-test.scd      # 12 passed
+& $sc -D d:/livelooper/test/fx-test.scd          # 19 passed
+& $sc -D d:/livelooper/test/join-test.scd        # 23 passed
 ```
 
 None of them needs the H8, and **they're safe to run while your rig is booted** — each
@@ -209,16 +210,10 @@ seconds rather than minutes.
 > Note: re-evaluating `looper.scd` **does** clear the loops (buffers are freed to avoid
 > leaking them). Reloading a file is an authoring action; `Ctrl+.` is the live one.
 
-MIDI message logging is now off by default — with permanent responders it would post on
-every pad hit all night and stall the IDE. Turn it on to discover pedal note numbers:
-
-```supercollider
-~midiDebug = true;
-```
-
 ## Click controls
 
-Toggle with **pedal 62** (or `~clickOn = true;` in the editor). Live tuning:
+Toggle with **OPTIONS** on the controller, the dashboard button, or `~clickOn = true;`
+in the editor. Live tuning:
 
 ```supercollider
 ~clickDiv    = 4;      // clicks per cycle (4 = quarter notes)
@@ -236,30 +231,35 @@ channel (mono/TS) so the audience never gets the click.
   there is no private monitor bus. Click hack: music mono-**LEFT**, click mono-**RIGHT**,
   feed the PA from Line Out with a **mono cable** (tip = left) so the audience gets the
   music without the click. (Fixed properly by a ≥4-out interface later.)
-- **AKAI MPK mini** — the looper control surface, MIDI channel 0. Three fixed pads act on
-  the **selected** track, so the layout doesn't grow as you add tracks:
+- **PS5 DualSense** (Bluetooth) — the control surface. It is read by the *browser's*
+  Gamepad API in the dashboard, not by SuperCollider: on Windows, SC's HID layer cannot
+  open a top-level collection on the Generic Desktop usage page, which is every gamepad.
+  The dashboard window must stay **visible** — browsers throttle a hidden tab and the
+  controller goes dead.
 
-  | Control | Number | Does |
-  |---|---|---|
-  | pad 5 | 36 | **record** — a fresh take on the selected track |
-  | pad 6 | 37 | **overdub** — layer onto it / stop layering |
-  | pad 7 | 38 | **clear** — stop and clear it |
-  | knobs | CC 64, 65, 66… | track level, one per track |
+  | Control | Does |
+  |---|---|
+  | left stick ↑↓ / d-pad | select — tracks, then the tidal & click levels |
+  | left stick ←→ | volume of whatever is selected |
+  | right stick ↑↓ | scroll the dashboard |
+  | ○ Circle | **record** — a fresh take on the selected track |
+  | □ Square | **overdub** — layer onto it / stop layering |
+  | △ Triangle | **clear** — stop and clear it |
+  | R2 | drive on the selected track — pressure = amount |
+  | OPTIONS | click on / off |
 
   Record and overdub are separate on purpose: record punches straight over a playing loop
   without clearing first, which a single cycling button can't do. Overdub on an empty
   track does nothing rather than quietly becoming a recording.
 
-  Select a track by clicking its strip in the dashboard.
+  Clicking a strip in the dashboard selects it too, so the mouse is a full alternative.
 
-  Pad notes **change with the PAD BANK button** (A = 16–23, B = 32–39). Stay on the bank
-  you mapped, or re-run `tools/midi-monitor.scd` and update `config.scd`.
+  There is **no MIDI control surface**. An AKAI MPK mini map used to exist and was
+  removed: two surfaces that can disagree about which track is selected is worse than
+  one. `git show 10cc44d:looper.scd` has it if you ever want it back.
 
-  The MPK's **keyboard shares channel 0**, so only ever map pad numbers — a keyboard note
-  used as a control fires every time you play that key.
-
-- **SPD-SX PRO** — MIDI channel 9, so it is inert as far as the loopers are concerned and
-  stays purely an instrument.
+- **SPD-SX PRO** — an instrument only. Its audio goes into the H8 like any other source;
+  nothing in the rig reads MIDI at all.
 
 ## Troubleshooting
 
