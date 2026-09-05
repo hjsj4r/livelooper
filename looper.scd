@@ -227,6 +227,9 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
     snapCps    = ~cps;
     cyc        = t[\cycles] ? ~numLoopCycles;
     t[\gen]    = (t[\gen] ? 0) + 1;
+    // cancels any loop stop/start still waiting on a bar line — otherwise it would fire
+    // during the new take and mute it
+    t[\muteGen] = (t[\muteGen] ? 0) + 1;
     snapGen    = t[\gen];
     curCycle   = ~nowCycle.();
 
@@ -344,10 +347,109 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
 
 // Clear / delete: stop and cancel anything pending.
 ~trackClear = { |t|
-    t[\gen] = (t[\gen] ? 0) + 1;
+    t[\gen]     = (t[\gen] ? 0) + 1;
+    t[\muteGen] = (t[\muteGen] ? 0) + 1;
     t[\synth] !? { t[\synth].set(\recRun, 0, \recLevel, 0, \preLevel, 1, \playing, 0) };
     t[\state] = \idle;
     (~tlabel.(t) ++ " CLEARED").postln;
+};
+
+// ── Stop / start a loop on the grid ─────────────────────────
+// Silence a loop and bring it back without losing it, quantized to the bar.
+//
+// The Phasor is never stopped, only muted, which is the whole trick: the play head keeps
+// running through the silence, so whenever you bring the loop back it is exactly where it
+// would have been had it never stopped. That is why ANY bar line is a safe re-entry —
+// there is no "wait for the top of the phrase", and the loop can never come back flammed
+// against the others.
+//
+// \stopping and \starting are real states, not cosmetic: the dashboard shows the toggle
+// is armed, and pressing again before the bar line cancels it rather than queueing a
+// second one.
+~trackLoopToggle = { |t|
+    var cps, now, target, wait, tok, on;
+    on = case
+        { t[\state] == \playing  } { false }
+        { t[\state] == \stopped  } { true  }
+        { t[\state] == \stopping } { true  }    // pressed twice — change your mind
+        { t[\state] == \starting } { false }
+        { nil };
+    if (on.isNil) {
+        (~tlabel.(t) ++ " stop/start ignored — "
+            ++ if (t[\state] == \idle) { "nothing recorded yet" } { "mid-take" }).postln;
+    } {
+        // its own token, NOT ~gen: bumping ~gen here would cancel a pending record
+        t[\muteGen] = (t[\muteGen] ? 0) + 1;
+        tok    = t[\muteGen];
+        cps    = (~cps ? 0.5).max(0.001);
+        now    = ~nowCycle.();
+        target = now.ceil;
+        if (((target - now) / cps) < (s.latency + 0.02)) { target = target + 1 };
+        wait   = (target - now) / cps;
+        t[\state] = if (on) { \starting } { \stopping };
+        (~tlabel.(t) ++ (if (on) { " starting" } { " stopping" })
+            ++ " on cycle " ++ target.asInteger
+            ++ " (" ++ wait.round(0.01) ++ "s)").postln;
+        SystemClock.sched((wait - s.latency).max(0), {
+            if (t[\muteGen] == tok) {
+                s.makeBundle(s.latency, { t[\synth].set(\playing, on.binaryValue) });
+                t[\state] = if (on) { \playing } { \stopped };
+                (~tlabel.(t) ++ if (on) { " LOOPING" } { " STOPPED" }).postln;
+            };
+            nil;
+        });
+    };
+};
+
+// ── Selection: a focus, plus any number of PINNED tracks ────
+// The focus is where the stick is. Pins are tracks you have parked in the selection so
+// that navigating away does not drop them — so the selection is always
+// (pinned tracks) + (the focused one), and there is no mode to be stuck in.
+//
+// Only tracks can be pinned. The mixer levels are single faders; "record the click"
+// has no meaning.
+~pinned = ~pinned ? [];
+
+~pinToggle = { |i|
+    var k = i ? (~focus ? 0);
+    if (~navIsTrack.(k)) {
+        // reassign rather than .add — Array.add only mutates in place while capacity
+        // allows, so the result has to be taken
+        ~pinned = if (~pinned.any { |x| x == k }) {
+            ~pinned.select { |x| x != k }
+        } {
+            ~pinned ++ [k]
+        };
+        (~tlabel.(~tracks[k]) ++ if (~pinned.any { |x| x == k }) { " PINNED" } { " unpinned" }
+            ++ "  selection: " ++ ~selection.().collect({ |x| ~tracks[x][\name] })).postln;
+    } {
+        ("pin ignored — " ++ ~navName.(k) ++ " is not a track").postln;
+    };
+    ~pinned;
+};
+
+~pinClear = { ~pinned = []; "pins cleared".postln; ~pinned };
+
+// Pins are filtered against the current track count on every read, so a config change
+// that shortens ~trackInputs can never leave a pin pointing at a track that is gone.
+~selection = {
+    var f   = ~focus ? 0;
+    var sel = (~pinned ? []).select { |k| k < ~tracks.size };
+    if (~navIsTrack.(f) and: { sel.any { |x| x == f }.not }) { sel = sel ++ [f] };
+    sel.sort;
+};
+
+// Transport acts on the whole selection; the LEVEL deliberately does not. A fader ride
+// is a continuous gesture you want to aim at one thing, and ~navAdjust already follows
+// the focus.
+~selDo = { |what, action|
+    var sel = ~selection.();
+    if (sel.isEmpty) {
+        (what ++ " ignored — the selection is on a mixer level, not a track").postln;
+    } {
+        sel.do { |k| action.(~tracks[k]) };
+    };
+    sel;
 };
 
 // ── Navigation ──────────────────────────────────────────────
@@ -419,8 +521,17 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
 
 // Drive amount, 0..1. Comes from the R2 trigger, so it is called often — it does nothing
 // but a .set, and the synth lags the value itself.
+//
+// The trigger's own position is kept separately from the scaled result, so that moving
+// ~fxDriveMax re-scales what is already there instead of waiting for you to touch R2
+// again. Scaling t[x] in place would compound on every change.
 ~trackFx = { |t, amt|
-    t[\fx] = amt.clip(0, 1) * (~fxDriveMax ? 1.0);
+    t[\fxAmt] = amt.clip(0, 1);
+    ~trackFxRescale.(t);
+};
+
+~trackFxRescale = { |t|
+    t[\fx] = (t[\fxAmt] ? 0) * (~fxDriveMax ? 1.0);
     t[\fxSynth] !? { t[\fxSynth].set(\drive, t[\fx]) };
     t[\fx];
 };
@@ -475,7 +586,13 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
     // \overdub means a full loop is already committed to the buffer, so it resumes too;
     // \recording was a half-finished take, so that one just drops to idle.
     var resume = ~tracks.collect { |t|
-        #[\playing, \overdub].includes(t[\state]) and: { t[\buf].notNil }
+        #[\playing, \overdub, \starting].includes(t[\state]) and: { t[\buf].notNil }
+    };
+    // A loop you had stopped keeps its audio but must come back SILENT — panic is not a
+    // reason for a muted part to reappear in the mix. It needs no restore: the synths are
+    // rebuilt with playing 0 anyway, so only the state has to be put back.
+    var silent = ~tracks.collect { |t|
+        #[\stopped, \stopping].includes(t[\state]) and: { t[\buf].notNil }
     };
     ~tracks.do { |t|
         t[\state] = \idle;
@@ -500,7 +617,10 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
         };
     };
     if (~restoreLoopsOnPanic) {
-        ~tracks.do { |t, i| if (resume[i]) { ~restoreTrack.(t) } };
+        ~tracks.do { |t, i|
+            if (resume[i]) { ~restoreTrack.(t) };
+            if (silent[i]) { t[\state] = \stopped };
+        };
     };
 };
 ServerTree.add(~buildTracks, s);

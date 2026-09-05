@@ -87,6 +87,7 @@ sequence — map it rather than guessing:
 | `startup.scd`  | One-evaluation boot: server + SuperDirt + everything else |
 | `looper.scd`   | Multitrack loopers (one per input) + faders + FX |
 | `click.scd`    | Tempo-locked click, right channel |
+| `settings.scd` | Config values editable from the dashboard, and written back |
 | `dashboard.scd`| Streams state to / takes commands from the web dashboard |
 | `dashboard/server.js` | Pure-Node bridge (SC ↔ browser). Run: `node server.js` |
 | `dashboard/index.html`| The web dashboard UI |
@@ -98,6 +99,7 @@ sequence — map it rather than guessing:
 | `tools/loop-inspect.scd` | Reads a recorded loop back and finds holes in it |
 | `tools/latency-measure.scd` | Measures the audio round trip, for `~loopOffset` |
 | `test/nav-test.scd` | Regression test for selection + level control |
+| `test/select-test.scd` | Regression test for pins, stop/start, and settings |
 | `test/panic-test.scd`  | Regression test for Ctrl+. recovery (see below) |
 | `test/looper-test.scd` | Regression test for the record path + signal path |
 | `test/dashboard-test.scd` | Regression test for the dashboard message rate |
@@ -196,11 +198,12 @@ the system default device):
 $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/panic-test.scd       # 26 passed
 & $sc -D d:/livelooper/test/looper-test.scd      # 33 passed
-& $sc -D d:/livelooper/test/dashboard-test.scd   # 30 passed
+& $sc -D d:/livelooper/test/dashboard-test.scd   # 49 passed
 & $sc -D d:/livelooper/test/nav-test.scd         # 29 passed
 & $sc -D d:/livelooper/test/stereo-test.scd      # 12 passed
 & $sc -D d:/livelooper/test/fx-test.scd          # 19 passed
 & $sc -D d:/livelooper/test/join-test.scd        # 36 passed
+& $sc -D d:/livelooper/test/select-test.scd      # 65 passed
 ```
 
 None of them needs the H8, and **they're safe to run while your rig is booted** — each
@@ -209,6 +212,57 @@ seconds rather than minutes.
 
 > Note: re-evaluating `looper.scd` **does** clear the loops (buffers are freed to avoid
 > leaking them). Reloading a file is an authoring action; `Ctrl+.` is the live one.
+
+## Selection: focus plus pins
+
+The **focus** is where the stick is. Navigating moves it, and it is always part of the
+selection. A **pin** parks a track in the selection so that navigating away does not drop
+it — press **✕ Cross**, or click the dot on a strip.
+
+```
+selection = pinned tracks  +  the focused one
+```
+
+So there is no mode to enter or get stuck in: pin as you go, and the transport buttons
+(record / overdub / clear / stop-start) fire on everything selected. Unpin with ✕ again.
+
+The **level** deliberately does *not* follow the selection — a fader ride is a continuous
+gesture you want aimed at one thing, so left/right always moves the focused item alone.
+
+Pinned strips get a purple left edge; the focused one gets the blue border. Both at once
+is normal and looks like both.
+
+## Stopping and starting a loop
+
+The **touchpad** silences the selected loops and brings them back, quantized to the next
+bar. The badge reads `STOPPING…` or `STARTING…` while the toggle is armed, and pressing
+again before the bar line cancels it rather than queueing a second one.
+
+Nothing is lost: the buffer stays, and the play head keeps running through the silence —
+only the output is muted. That is why any bar line is a safe re-entry. The loop always
+comes back exactly where it would have been, so it can never return flammed against the
+others, and there is no "wait for the top of the phrase".
+
+## Settings from the dashboard
+
+The **Settings** panel edits the config values that can change in a running rig. Each row
+says when the change bites:
+
+| | |
+|---|---|
+| `now` | pushed straight to the running synths |
+| `beat` | read on the next beat |
+| `record` | read when you next hit record — so re-record to hear it |
+
+Edits change the **session only**. `Save to config.scd` writes them into the file, and it
+is line-surgical: only the number on each assignment line is replaced, so every comment,
+ladder and measurement in that file survives untouched. The previous version is kept as
+`config.scd.bak`. `Reload from file` throws away unsaved changes and re-reads the file.
+
+Anything that decides how the server or the tracks were *built* — audio device, sample
+rate, channel counts, `~trackInputs`, `~minCps`, `~maxLoopCycles`, ports — is deliberately
+not there. Those need a restart, and a slider that silently did nothing would be worse
+than no slider.
 
 ## The loop join
 
@@ -274,13 +328,15 @@ channel (mono/TS) so the audience never gets the click.
 
   | Control | Does |
   |---|---|
-  | left stick ↑↓ / d-pad | select — tracks, then the tidal & click levels |
-  | left stick ←→ | volume of whatever is selected |
+  | left stick ↑↓ / d-pad | move the focus — tracks, then the tidal & click levels |
+  | left stick ←→ | volume of the focused item |
   | right stick ↑↓ | scroll the dashboard |
-  | ○ Circle | **record** — a fresh take on the selected track |
-  | □ Square | **overdub** — layer onto it / stop layering |
-  | △ Triangle | **clear** — stop and clear it |
-  | R2 | drive on the selected track — pressure = amount |
+  | ✕ Cross | **pin / unpin** the focused track |
+  | ○ Circle | **record** — a fresh take on every selected track |
+  | □ Square | **overdub** — layer onto them / stop layering |
+  | △ Triangle | **clear** — stop and clear them |
+  | touchpad | **stop / start** the loop, on the next bar |
+  | R2 | drive on the focused track — pressure = amount |
   | OPTIONS | click on / off |
 
   Record and overdub are separate on purpose: record punches straight over a playing loop

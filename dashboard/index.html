@@ -9,6 +9,7 @@
     --bg: #0e1116; --panel: #171b22; --line: #262c37;
     --text: #e6e9ef; --dim: #8b93a1;
     --idle: #5a6472; --rec: #ff4d5e; --play: #37d67a; --dub: #ffb020; --accent: #4da3ff;
+    --pin: #b57bff; --armed: #7f8ea3;
   }
   * { box-sizing: border-box; }
   body {
@@ -64,6 +65,34 @@
   /* the SELECTED track — stepping onto it with the stick/d-pad selects it outright */
   .track { position: relative; }
   .track.focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+  /* Pinned is a different thing from focused: focus is where the stick IS, a pin is a
+     track parked in the selection. Both can be true, so they must be distinguishable at
+     a glance — pins get a left edge, focus gets the border. */
+  .track.pinned { box-shadow: inset 3px 0 0 var(--pin); }
+  .track.focus.pinned { box-shadow: inset 3px 0 0 var(--pin), 0 0 0 1px var(--accent) inset; }
+  .pin { flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; cursor: pointer;
+         border: 1.5px solid var(--idle); background: none; color: var(--idle);
+         font-size: 11px; line-height: 1; padding: 0; }
+  .pin:hover { border-color: var(--pin); color: var(--pin); }
+  .track.pinned .pin { border-color: var(--pin); background: var(--pin); color: #04121f; }
+  /* an armed stop/start pulses, so you can see the toggle is waiting for the bar line */
+  @keyframes armed { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  .track-badge.armed { animation: armed 0.6s ease-in-out infinite; }
+
+  /* ---- settings ---- */
+  .setrow { display: grid; grid-template-columns: 132px 1fr 62px 54px;
+            gap: 10px; align-items: center; padding: 5px 0; }
+  .setrow + .setrow { border-top: 1px solid rgba(255,255,255,.05); }
+  .setrow .sk { font-size: 12px; }
+  .setrow .sk small { display: block; color: var(--dim); font-size: 10px; line-height: 1.3; }
+  .setrow input[type=range] { width: 100%; accent-color: var(--accent); }
+  .setrow .sv { font-variant-numeric: tabular-nums; font-size: 12px; text-align: right; }
+  .setrow.dirty .sv { color: var(--dub); font-weight: 700; }
+  .setrow .sw { font-size: 9px; text-transform: uppercase; letter-spacing: .04em;
+                text-align: center; color: var(--dim); border: 1px solid var(--idle);
+                border-radius: 4px; padding: 2px 0; }
+  .setrow .sw.record { color: var(--dub); border-color: var(--dub); }
+  .setbar { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
   .track.focus::before {
     content: '▸'; position: absolute; margin-left: -18px; color: var(--accent); font-size: 15px;
   }
@@ -151,6 +180,22 @@
   </div>
 
   <div class="panel">
+    <div class="label" style="display:flex;align-items:center;justify-content:space-between">
+      <span>Settings</span>
+      <span class="dim" id="setHint" style="font-size:11px">session only until saved</span>
+    </div>
+    <div id="settings"></div>
+    <div class="setbar">
+      <button class="act" id="setSave">Save to config.scd</button>
+      <button class="act" id="setReload">Reload from file</button>
+      <span class="dim" style="font-size:11px">
+        <b>now</b> takes effect immediately · <b>beat</b> on the next beat ·
+        <b>record</b> when you next hit record
+      </span>
+    </div>
+  </div>
+
+  <div class="panel">
     <div class="label">Controller — DualSense</div>
     <div class="padwrap">
       <!-- Only the mapped controls are drawn filled; L1/L2/R1/R2 are outlined because
@@ -190,7 +235,10 @@
         <circle class="btn" cx="186" cy="60" r="9"/><text class="cap" x="186" y="63">△</text>
         <circle class="btn" cx="200" cy="74" r="9"/><text class="cap" x="200" y="77">○</text>
         <circle class="btn" cx="172" cy="74" r="9"/><text class="cap" x="172" y="77">□</text>
-        <circle class="off" cx="186" cy="88" r="9"/>
+        <circle class="btn" cx="186" cy="88" r="9"/><text class="cap" x="186" y="91">✕</text>
+        <!-- touchpad -->
+        <rect class="btn2" x="96" y="46" width="68" height="26" rx="4"/>
+        <text class="lbl" x="98" y="42">touchpad — stop/start</text>
         <!-- sticks -->
         <circle class="btn2" cx="106" cy="100" r="11"/>
         <circle class="btn2" cx="154" cy="100" r="11"/>
@@ -207,6 +255,8 @@
         <div><b><span class="glyph">○</span> Circle</b><span>record</span></div>
         <div><b><span class="glyph">□</span> Square</b><span>overdub</span></div>
         <div><b><span class="glyph">△</span> Triangle</b><span>clear</span></div>
+        <div><b><span class="glyph">✕</span> Cross</b><span>pin / unpin — build a multi-track selection</span></div>
+        <div><b>TOUCHPAD</b><span>stop / start the loop, on the next bar</span></div>
         <div><b>OPTIONS</b><span>click on / off</span></div>
         <div><b>L1 L2 R1 R2</b><span>reserved for effects</span></div>
       </div>
@@ -231,7 +281,10 @@
 
 <script>
 const $ = id => document.getElementById(id);
-const STATE_COLORS = { idle:'--idle', recording:'--rec', playing:'--play', overdub:'--dub' };
+const STATE_COLORS = { idle:'--idle', recording:'--rec', playing:'--play', overdub:'--dub',
+                       stopped:'--idle', stopping:'--armed', starting:'--armed' };
+// stopping/starting are ARMED, not done — the toggle is waiting for the next bar line.
+const ARMED = { stopping: 1, starting: 1 };
 
 // ---- command helper ----
 function cmd(address, args=[]) {
@@ -253,6 +306,7 @@ let focusIdx = 0;
 // so you can see a take is in progress.
 const REC_LABEL = { idle: '● Rec', recording: 'recording…', playing: '● Rec', overdub: '● Rec' };
 const DUB_LABEL = { idle: '＋ Dub', recording: '＋ Dub', playing: '＋ Dub', overdub: '■ Stop dub' };
+const BADGE_TEXT = { stopping: 'STOPPING…', starting: 'STARTING…' };
 
 // args arrive as [name, input, name, input, ...] — pairs, so a missing value can't
 // shift every following track's label onto the wrong strip.
@@ -267,6 +321,7 @@ function buildTracks(args) {
     el.innerHTML =
       `<div class="track-id"><div class="track-name" title="${name}">${name}</div>` +
       `<div class="track-in">in ${inp}</div></div>` +
+      `<button class="pin" title="pin into the selection">●</button>` +
       `<span class="track-badge">IDLE</span>` +
       `<input type="range" class="fader" min="0" max="1" step="0.01" value="1">` +
       `<div class="bars" title="loop length — click to change">4 bar</div>` +
@@ -281,6 +336,9 @@ function buildTracks(args) {
     el.querySelector('.bars').onclick = (e) => {
       e.stopPropagation(); cmd('/cmd/trackCycles', [idx]);
     };
+    el.querySelector('.pin').onclick = (e) => {
+      e.stopPropagation(); cmd('/cmd/pinToggle', [idx]);
+    };
     el.querySelector('.rec').onclick = () => cmd('/cmd/trackRecord', [idx]);
     el.querySelector('.dub').onclick = () => cmd('/cmd/trackOverdub', [idx]);
     el.querySelector('.clr').onclick = () => cmd('/cmd/trackClear', [idx]);
@@ -291,6 +349,7 @@ function buildTracks(args) {
     c.appendChild(el);
   }
   setFocus(focusIdx);
+  applyPins(pins);   // the strips were just replaced, so re-paint what was pinned
 }
 function updateTracks(states) {
   const c = $('tracks');
@@ -298,12 +357,19 @@ function updateTracks(states) {
   [...c.children].forEach((el, idx) => {
     const st = states[idx] || 'idle';
     const badge = el.querySelector('.track-badge');
-    badge.textContent = st.toUpperCase();
+    badge.textContent = BADGE_TEXT[st] || st.toUpperCase();
+    badge.classList.toggle('armed', !!ARMED[st]);
     badge.style.background = getComputedStyle(document.documentElement).getPropertyValue(STATE_COLORS[st] || '--idle');
     el.querySelector('.rec').textContent = REC_LABEL[st] || '● Rec';
     el.querySelector('.dub').textContent = DUB_LABEL[st] || '＋ Dub';
   });
 }
+let pins = [];
+function applyPins(flags) {
+  pins = flags.map(Boolean);
+  [...$('tracks').children].forEach((el, i) => el.classList.toggle('pinned', !!pins[i]));
+}
+
 // The selection runs past the tracks onto the two mixer items, so the stick can reach
 // every fader. Indices: 0..n-1 tracks, then n = tidal level, n + 1 = click level.
 function setFocus(idx) {
@@ -399,7 +465,12 @@ const PAD = {
   clear:   3,    // Triangle
   drive:   7,    // R2 — ANALOG, pressure drives the distortion amount
   clickTg: 9,    // Options — toggles the metronome
+  pin:     0,    // Cross — pin/unpin the focused track
   dpadUp: 12, dpadDown: 13, dpadLeft: 14, dpadRight: 15,
+  // The touchpad CLICK is not part of the W3C standard mapping, so browsers append it
+  // past the standard 17. Chrome/Edge put a DualSense's at 17; some builds differ, so
+  // any button at 17 or beyond counts. Nothing else lives out there on this pad.
+  touchFrom: 17,
 };
 // R2 is continuous, so it needs quantising or it would post on every animation frame.
 // 1/64 steps are finer than the ear can follow on a drive control, and the synth lags
@@ -416,7 +487,7 @@ const AXIS_RY = 3;                   // right stick vertical — scrolls the pag
 const AXIS_ON = 0.5, AXIS_OFF = 0.3; // hysteresis: must fall back below OFF to re-fire
 const SCROLL_RATE = 16;              // px per frame at full deflection
 
-let padPrev = {}, padAxis = 0, padWarned = false;
+let padPrev = {}, padAxis = 0, padWarned = false, padProbed = false;
 
 function padEdge(name, isDown) {         // fire once per press, not once per frame
   const was = padPrev[name] || false;
@@ -465,9 +536,28 @@ function pollGamepad() {
   }
 
   if (padEdge('clickTg', b(PAD.clickTg).pressed)) cmd('/cmd/clickToggle', []);
-  if (padEdge('record',  b(PAD.record).pressed))  cmd('/cmd/trackRecord',  [focusIdx]);
-  if (padEdge('overdub', b(PAD.overdub).pressed)) cmd('/cmd/trackOverdub', [focusIdx]);
-  if (padEdge('clear',   b(PAD.clear).pressed))   cmd('/cmd/trackClear',   [focusIdx]);
+  // The controller drives the SELECTION — pinned tracks plus the focused one — so
+  // these are the /cmd/sel* addresses, not the per-track ones the strip buttons use.
+  // SC owns the selection; sending an index here would race the pin state.
+  if (padEdge('record',  b(PAD.record).pressed))  cmd('/cmd/selRecord',  []);
+  if (padEdge('overdub', b(PAD.overdub).pressed)) cmd('/cmd/selOverdub', []);
+  if (padEdge('clear',   b(PAD.clear).pressed))   cmd('/cmd/selClear',   []);
+  if (padEdge('pin',     b(PAD.pin).pressed))     cmd('/cmd/pinToggle',  []);
+
+  // Touchpad click — stop/start on the next bar line.
+  let touch = false;
+  for (let i = PAD.touchFrom; i < gp.buttons.length; i++) if (b(i).pressed) touch = true;
+  if (padEdge('touch', touch)) cmd('/cmd/selLoopToggle', []);
+  // If a browser does not expose the touchpad past 17, nothing above ever fires and the
+  // control just feels dead. Name the buttons it DOES have, once, so the index is a
+  // console line away rather than a guess.
+  if (!padProbed) {
+    padProbed = true;
+    console.log('gamepad "' + gp.id + '": ' + gp.buttons.length + ' buttons, ' +
+      gp.axes.length + ' axes. Touchpad is expected at ' + PAD.touchFrom + '+.' +
+      (gp.buttons.length <= PAD.touchFrom
+        ? '  NOT EXPOSED here — the touchpad will not work in this browser.' : ''));
+  }
 
   // R2 pressure -> drive on the selected track. Spring return means it always lands
   // back at clean, so an effect can never be left engaged by accident.
@@ -527,6 +617,68 @@ function requestBanks() { cmd('/cmd/getBanks', []); }
 $('refresh').onclick = requestBanks;
 renderBanks();   // initial paint (shows the waiting hint until banks arrive)
 
+// ---- settings ----
+// SC owns both the spec and the values. The browser holds no defaults of its own: a
+// dashboard that thinks it knows the config is a dashboard that can disagree with the
+// rig, and then you are debugging two states instead of one.
+let setSpec = [];
+const lastSetEdit = {};
+function buildSettings(args) {
+  setSpec = [];
+  for (let i = 0; i + 6 < args.length; i += 7) {
+    setSpec.push({ key: String(args[i]), label: String(args[i + 1]),
+                   min: +args[i + 2], max: +args[i + 3], step: +args[i + 4],
+                   when: String(args[i + 5]), note: String(args[i + 6]) });
+  }
+  const c = $('settings'); c.innerHTML = '';
+  setSpec.forEach(sp => {
+    const row = document.createElement('div');
+    row.className = 'setrow'; row.dataset.key = sp.key;
+    row.innerHTML =
+      `<div class="sk">${sp.label}<small>${sp.note}</small></div>` +
+      `<input type="range" min="${sp.min}" max="${sp.max}" step="${sp.step}">` +
+      `<div class="sv">–</div>` +
+      `<div class="sw ${sp.when}">${sp.when}</div>`;
+    row.querySelector('input').oninput = (e) => {
+      const v = parseFloat(e.target.value);
+      lastSetEdit[sp.key] = performance.now();
+      row.querySelector('.sv').textContent = fmtSet(v, sp.step);
+      cmd('/cmd/setConfig', [sp.key, v]);
+    };
+    c.appendChild(row);
+  });
+}
+// match SC's formatting so the readout and the file agree
+function fmtSet(v, step) {
+  if (step >= 1) return String(Math.round(v));
+  const places = Math.ceil(-Math.log10(step));
+  return v.toFixed(places).replace(/0+$/, '').replace(/\.$/, '') || '0';
+}
+function applySettings(args) {
+  let dirty = 0;
+  for (let i = 0; i + 2 < args.length; i += 3) {
+    const key = String(args[i]), v = +args[i + 1], isDirty = !!+args[i + 2];
+    const row = document.querySelector(`.setrow[data-key="${key}"]`);
+    if (!row) continue;
+    if (isDirty) dirty++;
+    row.classList.toggle('dirty', isDirty);
+    // same guard as the faders: don't yank a slider you are still dragging
+    if (performance.now() - (lastSetEdit[key] || 0) > 400) {
+      const sp = setSpec.find(x => x.key === key) || { step: 0.01 };
+      row.querySelector('input').value = v;
+      row.querySelector('.sv').textContent = fmtSet(v, sp.step);
+    }
+  }
+  const save = $('setSave');
+  save.textContent = dirty ? `Save ${dirty} to config.scd` : 'Save to config.scd';
+  save.classList.toggle('on', dirty > 0);
+  $('setHint').textContent = dirty
+    ? `${dirty} unsaved — restarting would lose ${dirty === 1 ? 'it' : 'them'}`
+    : 'in sync with config.scd';
+}
+$('setSave').onclick   = () => cmd('/cmd/saveConfig', []);
+$('setReload').onclick = () => cmd('/cmd/reloadConfig', []);
+
 // ---- incoming state stream ----
 const es = new EventSource('/events');
 es.onopen  = () => { $('conn').classList.add('on'); requestBanks(); cmd('/cmd/getTracks', []); };
@@ -536,6 +688,16 @@ es.onmessage = (e) => {
   if (m.address === '/clock') {
     const [cps, phase, div] = m.args;
     onClock(cps, phase, div);
+  } else if (m.address === '/pins') {
+    applyPins(m.args);
+  } else if (m.address === '/configSpec') {
+    buildSettings(m.args);
+  } else if (m.address === '/config') {
+    applySettings(m.args);
+  } else if (m.address === '/configSaved') {
+    const n = +m.args[0];
+    toast(n < 0 ? 'save failed — see the SC post window'
+                : `saved ${n} values to config.scd`);
   } else if (m.address === '/cycles') {
     [...$('tracks').children].forEach((el, i) => {
       const b = el.querySelector('.bars');

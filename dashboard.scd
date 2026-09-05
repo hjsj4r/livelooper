@@ -48,6 +48,19 @@ OSCdef(\cmdTrackLevel, { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackLevel.(t
 // R2 pressure. Arrives often while the trigger moves, so the handler stays trivial.
 OSCdef(\cmdTrackFx,    { |msg| ~tracks[msg[1].asInteger] !? { |t| ~trackFx.(t, msg[2].asFloat) } }, '/cmd/trackFx').fix;
 OSCdef(\cmdFocus,      { |msg| ~navFocus.(msg[1].asInteger) }, '/cmd/focus').fix;
+
+// The per-strip buttons above act on ONE track — the one whose button you clicked.
+// The controller acts on the SELECTION (pinned tracks plus the focused one), which is
+// why these are separate addresses rather than a flag on the same ones: a mouse click on
+// a strip should never quietly fire on four tracks because something was pinned.
+OSCdef(\cmdSelRecord,  { ~selDo.("record",  { |t| ~trackRecord.(t) })  }, '/cmd/selRecord').fix;
+OSCdef(\cmdSelOverdub, { ~selDo.("overdub", { |t| ~trackOverdub.(t) }) }, '/cmd/selOverdub').fix;
+OSCdef(\cmdSelClear,   { ~selDo.("clear",   { |t| ~trackClear.(t) })   }, '/cmd/selClear').fix;
+OSCdef(\cmdSelLoop,    { ~selDo.("stop/start", { |t| ~trackLoopToggle.(t) }) },
+    '/cmd/selLoopToggle').fix;
+OSCdef(\cmdPinToggle,  { |msg| ~pinToggle.(if (msg.size > 1) { msg[1].asInteger }) },
+    '/cmd/pinToggle').fix;
+OSCdef(\cmdPinClear,   { ~pinClear.() }, '/cmd/pinClear').fix;
 // From the DualSense, relayed by the browser's Gamepad API through the bridge.
 OSCdef(\cmdNavMove,    { |msg| ~navMove.(msg[1].asInteger) }, '/cmd/navMove').fix;
 // Left/right on the stick — nudges whatever the selection is sitting on, tracks and the
@@ -77,8 +90,43 @@ OSCdef(\cmdDirtLevel, { |msg|
         *~tracks.collect({ |t| [t[\name].asString, ~inLabel.(t).asString] }).flatten);
 };
 // A browser connecting mid-set needs the full picture at once, not on the next change.
+// ── Settings ────────────────────────────────────────────────
+// Guarded on ~settingsSpec: the test suites load looper/click/dashboard without
+// settings.scd, and a missing settings module should leave the rest of the dashboard
+// working rather than throwing on every message.
+~sendConfigSpec = {
+    ~settingsSpec !? {
+        ~dash.sendMsg('/configSpec', *~settingsSpec.collect({ |e|
+            [e[\key].asString, e[\label], e[\min].asFloat, e[\max].asFloat,
+                e[\step].asFloat, e[\when], e[\note]]
+        }).flatten);
+    };
+};
+~sendConfig = {
+    ~settingsSpec !? {
+        ~dash.sendMsg('/config', *~settingsSpec.collect({ |e|
+            [e[\key].asString, (currentEnvironment[e[\key]] ? 0).asFloat,
+                (~settingsDirty ? []).any({ |k| k == e[\key] }).binaryValue]
+        }).flatten);
+    };
+};
+OSCdef(\cmdGetConfig, { ~sendConfigSpec.(); ~sendConfig.() }, '/cmd/getConfig').fix;
+OSCdef(\cmdSetConfig, { |msg|
+    ~settingsSet !? { ~settingsSet.(msg[1].asString, msg[2].asFloat); ~sendConfig.() };
+}, '/cmd/setConfig').fix;
+OSCdef(\cmdSaveConfig, { |msg|
+    var n = ~settingsSave !? { ~settingsSave.() };
+    ~dash.sendMsg('/configSaved', (n ? -1).asInteger);
+    ~sendConfig.();
+}, '/cmd/saveConfig').fix;
+OSCdef(\cmdReloadConfig, { |msg|
+    ~settingsReload !? { ~settingsReload.() };
+    ~sendConfig.();
+}, '/cmd/reloadConfig').fix;
+
 OSCdef(\cmdGetTracks, {
     ~sendTracks.(); ~sendState.(); ~sendLevels.(); ~sendFx.(); ~sendCycles.(); ~sendClock.();
+    ~sendPins.(); ~sendConfigSpec.(); ~sendConfig.();
 }, '/cmd/getTracks').fix;
 
 // ── Sample browser backend ──────────────────────────────────
@@ -114,6 +162,14 @@ OSCdef(\cmdPreview,  { |msg| ~preview.(msg[1].asString, msg[2].asInteger) }, '/c
     ~dash.sendMsg('/state', (~focus ? 0).asInteger, (~clickOn ? false).binaryValue,
         (~clickAmp ? 0.5).asFloat, (~dirtLevel ? 1.0).asFloat,
         *~tracks.collect({ |t| (t[\state] ? \idle).asString }));
+};
+
+// Which tracks are pinned into the selection. Sent as a flag per track rather than a
+// list of indices, so an empty selection is still a well-formed message with a known
+// length instead of a bare address the browser has to special-case.
+~sendPins = {
+    var pins = ~pinned ? [];
+    ~dash.sendMsg('/pins', *~tracks.collect({ |t, i| pins.any({ |k| k == i }).binaryValue }));
 };
 
 // Loop length per track, in bars.
@@ -158,6 +214,7 @@ OSCdef(\cmdPreview,  { |msg| ~preview.(msg[1].asString, msg[2].asInteger) }, '/c
         var lastLevels = Array.fill(~tracks.size, -1);
         var lastFx     = Array.fill(~tracks.size, -1);
         var lastCycles = Array.fill(~tracks.size, -1);
+        var lastPins = nil, pinned;
         var lastFocus = nil, lastClick = nil, nextClock = 0, changed, moved, driven, rebar, now;
         while({ myGen == ~dashGen }, {
             now     = Main.elapsedTime;
@@ -194,6 +251,9 @@ OSCdef(\cmdPreview,  { |msg| ~preview.(msg[1].asString, msg[2].asInteger) }, '/c
                 lastClick = [(~clickOn ? false), (~clickAmp ? 0.5), (~dirtLevel ? 1.0)];
                 ~sendState.();
             };
+            // pins move on a keypress, not continuously — compare the sorted list
+            pinned = (~pinned ? []).sort;
+            if (pinned != lastPins) { lastPins = pinned; ~sendPins.() };
             if (moved)  { ~sendLevels.() };
             if (driven) { ~sendFx.() };
             if (rebar)  { ~sendCycles.() };

@@ -15,6 +15,10 @@ samples/**/*.ogg
 *.flac
 !samples/README.md
 
+# The dashboard's Save button keeps the previous config here before overwriting.
+# It is a safety net for one bad write, not a version history — git is that.
+config.scd.bak
+
 # ── SuperCollider ───────────────────────────────────────────
 synthdefs/
 *.scsyndef

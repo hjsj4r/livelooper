@@ -6,12 +6,13 @@
 //  Run it headless (does NOT need the ZOOM H8 — boots the system default device):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/dashboard-test.scd
 //
-//  Expect: "30 passed, 0 failed".
+//  Expect: "49 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok;
 var clocks = 0, states = 0, legacy = 0, levels = 0;
 var lastCps, lastPhase, lastDiv, lastState, lastLevels, lastInit, lastCycles, window = 4.0;
+var lastPins, lastSpec, lastConfig, lastSaved, me, sandbox;
 
 ok = { |label, cond|
     if (cond) { pass = pass + 1; ("  PASS  " ++ label).postln }
@@ -46,11 +47,15 @@ s.waitForBoot({
         OSCdef(\dtLevels, { |msg| levels = levels + 1; lastLevels = msg }, '/levels');
         OSCdef(\dtInit,   { |msg| lastInit = msg }, '/tracksInit');
         OSCdef(\dtCycles, { |msg| lastCycles = msg }, '/cycles');
+        OSCdef(\dtPins,   { |msg| lastPins   = msg }, '/pins');
+        OSCdef(\dtSpec,   { |msg| lastSpec   = msg }, '/configSpec');
+        OSCdef(\dtConfig, { |msg| lastConfig = msg }, '/config');
+        OSCdef(\dtSaved,  { |msg| lastSaved  = msg }, '/configSaved');
         // the retired chatty addresses must not come back
         OSCdef(\dtLegacyA, { |msg| legacy = legacy + 1 }, '/tick');
         OSCdef(\dtLegacyB, { |msg| legacy = legacy + 1 }, '/trackStates');
 
-        ["looper.scd", "click.scd", "dashboard.scd"].do { |f|
+        ["looper.scd", "click.scd", "settings.scd", "dashboard.scd"].do { |f|
             ("D:/livelooper/" ++ f).load;
         };
         while { ~tracks.isNil or: { ~tracks.any { |x| x[\synth].isNil } } } { 0.2.wait };
@@ -150,6 +155,78 @@ s.waitForBoot({
             lastInit[3].asString == ~inLabel.(~tracks[0]).asString);
         ok.("last pair carries the last track's name",
             lastInit[lastInit.size - 2].asString == ~tracks.last[\name].asString);
+
+        "".postln; "--- COMMANDS OVER REAL OSC ---".postln;
+        // Everything above calls the SC functions directly. This section goes through the
+        // actual /cmd/... addresses, which is where a typo in the glue would live.
+        me = NetAddr("127.0.0.1", NetAddr.langPort);
+        // An earlier section sets a track's state by hand to prove /state is pushed.
+        // Clear everything first, or these assertions inherit that fiction.
+        ~tracks.do { |x| ~trackClear.(x) };
+        0.3.wait;
+
+        ~pinClear.(); ~navFocus.(0);
+        me.sendMsg('/cmd/pinToggle', 2);
+        0.3.wait;
+        ok.("pinToggle over OSC pins a track", ~pinned == [2]);
+        ok.("a /pins message went out",        lastPins.notNil);
+        ok.("pins carry a flag per track",     lastPins.size == (~tracks.size + 1));
+        ok.("the right track is flagged",      lastPins[3] == 1 and: { lastPins[1] == 0 });
+        me.sendMsg('/cmd/pinToggle', 2);
+        0.3.wait;
+        ok.("...and unpins it",                ~pinned.isEmpty);
+
+        // the controller's transport must act on the SELECTION, the strips on one track
+        ~navFocus.(1);
+        me.sendMsg('/cmd/pinToggle', 4);
+        0.3.wait;
+        me.sendMsg('/cmd/selRecord');
+        0.4.wait;
+        ok.("selRecord hits every selected track",
+            ~tracks[1][\state] == \recording and: { ~tracks[4][\state] == \recording });
+        ok.("...and nothing else",  ~tracks[0][\state] == \idle);
+        me.sendMsg('/cmd/selClear');
+        0.4.wait;
+        ok.("selClear releases them",
+            ~tracks.every { |x| x[\state] == \idle });
+        ~pinClear.(); ~navFocus.(0);
+
+        me.sendMsg('/cmd/selLoopToggle');
+        0.4.wait;
+        ok.("selLoopToggle on an empty track is harmless",
+            ~tracks[0][\state] == \idle);
+
+        "".postln; "--- SETTINGS OVER REAL OSC ---".postln;
+        me.sendMsg('/cmd/getConfig');
+        0.4.wait;
+        ok.("configSpec arrives",       lastSpec.notNil);
+        ok.("spec is 7 fields per entry",
+            ((lastSpec.size - 1) % 7) == 0);
+        ok.("spec covers every setting",
+            ((lastSpec.size - 1) / 7) == ~settingsSpec.size);
+        ok.("config values arrive",     lastConfig.notNil);
+        ok.("values are 3 fields each", ((lastConfig.size - 1) % 3) == 0);
+
+        me.sendMsg('/cmd/setConfig', "tailSecs", 0.33);
+        0.4.wait;
+        ok.("setConfig over OSC moves the value", (~tailSecs - 0.33).abs < 0.001);
+        ok.("...and reports it back dirty",
+            { var i = (1, 4 .. lastConfig.size - 1).detect { |k|
+                lastConfig[k].asString == "tailSecs" };
+              i.notNil and: { lastConfig[i + 2] == 1 } }.value);
+
+        // save into a sandbox — never the project's own config.scd
+        sandbox = (Platform.defaultTempDir ++ "ll-dash-test/").standardizePath;
+        File.mkdir(sandbox);
+        File(sandbox ++ "config.scd", "w")
+            .write(File.readAllString("D:/livelooper/config.scd")).close;
+        ~projectDir = sandbox;
+        me.sendMsg('/cmd/saveConfig');
+        0.6.wait;
+        ok.("saveConfig replies with a count", lastSaved.notNil and: { lastSaved[1] > 0 });
+        ok.("saving clears dirty",             ~settingsDirty.isEmpty);
+        ok.("it wrote the sandbox, not the project",
+            File.readAllString(sandbox ++ "config.scd").contains("~tailSecs  = 0.33"));
 
         "".postln;
         ("======== " ++ pass ++ " passed, " ++ fail ++ " failed ========").postln;

@@ -135,6 +135,7 @@ bootAll = {
 
     (~projectDir ++ "looper.scd").load;
     (~projectDir ++ "click.scd").load;
+    (~projectDir ++ "settings.scd").load;
     (~projectDir ++ "dashboard.scd").load;
 
     "".postln;
