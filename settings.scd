@@ -36,6 +36,8 @@
         when: "record", note: "audio round trip. Measure it: tools/latency-measure.scd"),
     (key: \headFadeSecs, label: "head fade", min: 0, max: 0.02, step: 0.001,
         when: "record", note: "de-clicks the seam. Above ~10ms it softens attacks"),
+    (key: \headWindowSecs, label: "head window", min: 0, max: 0.08, step: 0.005,
+        when: "record", note: "opens the take early so a rushed hit on the 1 is captured whole"),
     (key: \tailSecs, label: "tail", min: 0, max: 1.5, step: 0.01,
         when: "record", note: "carries a cymbal across the join. 0 = butt splice"),
     (key: \tailCurve, label: "tail curve", min: 0.2, max: 2.0, step: 0.05,

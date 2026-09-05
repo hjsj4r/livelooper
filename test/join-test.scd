@@ -16,7 +16,7 @@
 //  Run it headless (no ZOOM H8 needed):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/join-test.scd
 //
-//  Expect: "36 passed, 0 failed".
+//  Expect: "44 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, t, sr, holes;
@@ -199,10 +199,85 @@ s.waitForBoot({
                                 ok.("c<1 holds the tail high early",
                                     ((1 - 0.25) ** 0.5) > 0.75);
 
-                                "".postln;
-                                ("======== " ++ pass ++ " passed, " ++ fail
-                                    ++ " failed ========").postln;
-                                fork { 0.5.wait; 0.exit };
+                                fork {
+                                    var sr2 = s.sampleRate, gridPos, want, opened;
+                                    // --- HEAD WINDOW ---
+                                    // It must move the SEAM and nothing else. The loop
+                                    // stays exactly one phrase long, so a window can
+                                    // never make loops drift against each other — it
+                                    // only changes where the circle is cut.
+                                    "".postln; "--- HEAD WINDOW ---".postln;
+                                    ~headWindowSecs = 0;
+                                    ~trackClear.(t);
+                                    ~inj = Synth(\inject, addAction: \addToHead);
+                                    ~trackRecord.(t);
+                                    3.0.wait;
+                                    ok.("no window: nothing is reserved",
+                                        t[\headWindow] == 0);
+                                    // With no window the seam sits exactly ON the grid
+                                    // point the take was armed for.
+                                    gridPos = ~phasePosFor.(t[\startCycle],
+                                        t[\loopFrames], t[\cycles]);
+                                    ok.("no window: the seam is on the grid point",
+                                        ((t[\startPhase] * t[\loopFrames]) - gridPos).abs < 2);
+
+                                    ~headWindowSecs = 0.03;
+                                    ~trackClear.(t);
+                                    ~trackRecord.(t);
+                                    3.0.wait;
+                                    ~inj.free;
+                                    ok.("the window is armed",
+                                        (t[\headWindow] - (sr2 * 0.03)).abs < 2);
+                                    // Compare each take against the grid point IT was
+                                    // armed for. Comparing two takes to each other says
+                                    // nothing: they land on different cycles, so their
+                                    // phrase positions differ for reasons of their own.
+                                    gridPos = ~phasePosFor.(t[\startCycle],
+                                        t[\loopFrames], t[\cycles]);
+                                    want = (gridPos - t[\headWindow] + t[\loopFrames])
+                                        % t[\loopFrames];
+                                    ("        (grid point " ++ gridPos ++ ", seam at "
+                                        ++ (t[\startPhase] * t[\loopFrames]).round
+                                        ++ ", window " ++ t[\headWindow] ++ " frames)").postln;
+                                    ok.("the seam sits one window BEFORE the grid point",
+                                        ((t[\startPhase] * t[\loopFrames]) - want).abs < 2);
+                                    // and the take really opened early in wall-clock —
+                                    // moving resetPos alone would just shift the audio
+                                    opened = t[\loopStartTime]
+                                        - (~lastEventTime
+                                            + ((t[\startCycle] - ~lastCycle) / ~cps)
+                                            + ~loopOffset);
+                                    ("        (take opened " ++ (opened * 1000).round(0.1)
+                                        ++ " ms vs the grid; window is "
+                                        ++ (t[\headWindow] / sr2 * 1000).round(0.1)
+                                        ++ " ms)").postln;
+                                    // 20 ms of slack, not because the rig is that loose
+                                    // but because this suite pins ~lastEventTime once and
+                                    // then extrapolates for a minute — the drift is the
+                                    // harness's, not the looper's. The resetPos assertion
+                                    // above is the exact one, and it holds to 2 frames.
+                                    ok.("recording opened one window early",
+                                        (opened + (t[\headWindow] / sr2)).abs < 0.02);
+                                    // ...and that is ALL it moves
+                                    ok.("the loop is still one phrase",
+                                        t[\loopFrames] == ~loopFramesFor.(2.0, 4));
+                                    ok.("the window is capped at a quarter of the loop",
+                                        t[\headWindow] <= (t[\loopFrames] / 4));
+                                    // and the take still filled the whole circle — a
+                                    // window must not leave dead space in the loop
+                                    t[\buf].loadToFloatArray(0, t[\loopFrames], { |w|
+                                        var wb = holes.(w, 16);
+                                        ("        (quietest sixteenth with a window = "
+                                            ++ wb.minItem.round(0.001) ++ ")").postln;
+                                        ok.("no dead space anywhere in the loop",
+                                            wb.minItem > 0.1);
+                                        ~headWindowSecs = 0;
+                                        "".postln;
+                                        ("======== " ++ pass ++ " passed, " ++ fail
+                                            ++ " failed ========").postln;
+                                        fork { 0.5.wait; 0.exit };
+                                    });
+                                };
                             });
                         };
                     });

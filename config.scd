@@ -81,6 +81,26 @@
 //     0.02  +         you are now softening attacks
 ~headFadeSecs = 0.003;
 
+// HEAD WINDOW — how far BEFORE the downbeat the take opens, and the loop is cut.
+// This is not the fade and it is not ~loopOffset. Those move the audio; this moves the
+// SEAM, leaving the audio exactly where you played it.
+//
+// The buffer is a closed circle of exactly one phrase. Whatever sits just before the cut
+// was recorded at the END of the take — a different pass round the loop. So if you strike
+// the 1 a little early and the cut sits ON the 1, the strike's onset belongs to one pass
+// and its body to another, and the loop replays a truncated attack: a crash that starts
+// halfway in, a snare with the crack shaved off it.
+//
+// Cutting the circle a few tens of milliseconds earlier puts the whole strike on one side
+// of it. As a bonus the seam lands somewhere quiet instead of on top of a transient,
+// which is the easiest place for a join to hide.
+//     0        cut exactly on the downbeat
+//     0.02 - 0.05     covers a normal human rush on the 1                  <- set here
+//     0.08 +          only if you play very far ahead; the window is dead
+//                     space the loop has to carry
+// Capped at a quarter of the loop, and read when you hit RECORD.
+~headWindowSecs = 0.03;
+
 // TAIL — recording keeps running past the loop end by this much, and that extra audio is
 // played back ADDED on top of the loop start, decaying away over its own length. This is
 // what carries a cymbal or a ringing note across the seam instead of cutting it dead.
@@ -107,7 +127,7 @@
 // Buffers are sized for ~tailSecs on top of the longest loop, and a take caps the tail
 // at a quarter of the buffer so a long tail can never eat the loop itself.
 //
-// All three are read when you hit RECORD, not continuously: change them, then re-record.
+// All four are read when you hit RECORD, not continuously: change them, then re-record.
 
 // Which cycle boundaries a recording is allowed to START on. 1 = the next measure, which
 // is almost always what you want when you hit record.
@@ -130,7 +150,7 @@
 // over five pings. Independently, 0.025 had been arrived at by ear — the two agree.
 // Re-measure after any change to the buffer size, the sample rate or the interface:
 //     "D:/livelooper/tools/latency-measure.scd".load;  ~measureLatency.(1);
-~loopOffset    = 0.035;
+~loopOffset    = 0.025;
 
 // Loop buffers are allocated ONCE, at the size the slowest tempo you'll ever record at
 // needs — so hitting record never allocates and never stalls. Lower = longer buffers =

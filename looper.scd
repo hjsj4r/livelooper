@@ -174,7 +174,8 @@ SynthDef(\trackFx, { |inBus = 0, out = 0, level = 1|
 };
 
 // Length of the recorded overlap tail, in frames.
-~headFadeFrames = { (~srate.() * (~headFadeSecs ? 0)).round.asInteger.max(0) };
+~headFadeFrames   = { (~srate.() * (~headFadeSecs   ? 0)).round.asInteger.max(0) };
+~headWindowFrames = { (~srate.() * (~headWindowSecs ? 0)).round.asInteger.max(0) };
 ~tailFrames     = { (~srate.() * (~tailSecs     ? 0)).round.asInteger.max(0) };
 
 // Where in the loop buffer a given Tidal cycle falls. Buffer position 0 is always a
@@ -223,7 +224,7 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
 // Cycle-quantized record → auto-play after ~numLoopCycles. Cancelable via gen.
 ~startRecording = { |t|
     var snapCps, snapGen, curCycle, q, target, timeToNext, minLead, wanted, frames, resetPos;
-    var cyc, headFrames, tailFrames, takeSecs;
+    var cyc, headFrames, tailFrames, hwFrames, takeSecs;
     snapCps    = ~cps;
     cyc        = t[\cycles] ? ~numLoopCycles;
     t[\gen]    = (t[\gen] ? 0) + 1;
@@ -251,6 +252,7 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
     // quarter-buffer cap is what stops a long ~tailSecs from eating the loop itself.
     headFrames = ~headFadeFrames.();
     tailFrames = ~tailFrames.().min((t[\bufFrames] / 4).asInteger);
+    hwFrames   = ~headWindowFrames.();
     wanted     = ~loopFramesFor.(snapCps, cyc);
     frames     = wanted.min(t[\bufFrames] - tailFrames);
     if (frames < wanted) {
@@ -261,20 +263,39 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
     t[\loopFrames] = frames;
     t[\headFrames] = headFrames;
     t[\tailFrames] = tailFrames;
-    resetPos       = ~phasePosFor.(target, frames, cyc);
+    // THE HEAD WINDOW moves the SEAM, not the audio.
+    // Recording opens hwFrames early and the loop's origin moves back by exactly the
+    // same amount, so buffer position and musical time stay locked together — the loop
+    // still plays every note where you played it. What changes is where the circle is
+    // cut: hwFrames before the downbeat instead of on it.
+    //
+    // That matters because the buffer is a closed circle of exactly `frames`. The audio
+    // just BEFORE the seam is written at the END of the take — a different pass. So a
+    // strike played early against a seam sitting on the downbeat has its onset in one
+    // pass and its body in another, and the loop replays a truncated attack. Cutting the
+    // circle a few tens of milliseconds earlier puts the whole strike on one side of it.
+    //
+    // NOT the same knob as ~loopOffset, which moves the audio against the grid. This
+    // moves the grid's cut point against the audio, and the loop stays exactly one
+    // phrase long either way, so nothing drifts.
+    hwFrames       = hwFrames.min((frames / 4).asInteger);
+    resetPos       = (~phasePosFor.(target, frames, cyc) - hwFrames + frames) % frames;
+    t[\headWindow] = hwFrames;
     t[\startPhase] = resetPos / frames;       // for tools/sync-check.scd
     takeSecs       = (cyc / snapCps) + (tailFrames / ~srate.());
 
     (~tlabel.(t) ++ " waiting " ++ timeToNext.round(0.01) ++ "s for cycle "
         ++ target.asInteger ++ "  (" ++ cyc ++ " bars, phrase pos "
         ++ (t[\startPhase] * 100).round(1) ++ "%, head "
-        ++ (headFrames / ~srate.() * 1000).round(1) ++ "ms, tail "
+        ++ (headFrames / ~srate.() * 1000).round(1) ++ "ms, window "
+        ++ (hwFrames / ~srate.() * 1000).round(1) ++ "ms, tail "
         ++ (tailFrames / ~srate.() * 1000).round(1) ++ "ms)...").postln;
     // Wake s.latency EARLY and timestamp the bundle for the real moment. Sending with
     // makeBundle(0) gave scsynth no lead time, so the phase reset landed ~20 ms late
     // (the "late 0.02" lines in the post window) with jitter on top. Timestamped, it
     // executes exactly on the boundary.
-    SystemClock.sched((timeToNext + ~loopOffset - s.latency).max(0), {
+    SystemClock.sched(
+        (timeToNext + ~loopOffset - (hwFrames / ~srate.()) - s.latency).max(0), {
         if (t[\gen] == snapGen) {
             s.makeBundle(s.latency, {
                 t[\synth].set(\bufnum, t[\buf], \loopFrames, frames, \resetPos, resetPos,

@@ -8,7 +8,7 @@
 //  Run it headless (does NOT need the ZOOM H8 — boots the system default device):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/looper-test.scd
 //
-//  Expect: "33 passed, 0 failed".
+//  Expect: "34 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, t, bufBefore, framesAt2, gotFrames;
@@ -142,12 +142,30 @@ s.waitForBoot({
             ++ "  quantize=" ++ ~recordQuantize ++ ")").postln;
         ok.("punch-in was NOT forced to a phrase boundary",
             (~tracks[0][\startCycle] % ~numLoopCycles) != (~tracks[1][\startCycle] % ~numLoopCycles));
+        // The seam no longer sits ON the grid point: ~headWindowSecs deliberately cuts the
+        // circle a little BEFORE it, so an early strike on the 1 is captured whole. That
+        // is a constant, identical for every track, so it cannot affect stacking — but the
+        // reference has to include it or this measures the window instead of the grid.
+        ~gridPhase = { |t|
+            ((~phasePosFor.(t[\startCycle], t[\loopFrames], t[\cycles])
+                - (t[\headWindow] ? 0) + t[\loopFrames]) % t[\loopFrames])
+                    / t[\loopFrames];
+        };
         ok.("t0 phase matches its start cycle",
-            (~tracks[0][\startPhase]
-                - ((~tracks[0][\startCycle] % ~numLoopCycles) / ~numLoopCycles)).abs < 0.01);
+            (~tracks[0][\startPhase] - ~gridPhase.(~tracks[0])).abs < 0.001);
         ok.("t1 phase matches its start cycle",
-            (~tracks[1][\startPhase]
-                - ((~tracks[1][\startCycle] % ~numLoopCycles) / ~numLoopCycles)).abs < 0.01);
+            (~tracks[1][\startPhase] - ~gridPhase.(~tracks[1])).abs < 0.001);
+        // The invariant that actually matters, and the one the window cannot touch: the
+        // two seams are separated by exactly the gap between their start cycles. Whatever
+        // constant offset the window adds cancels in the subtraction, so this holds for
+        // any ~headWindowSecs — including a value that changes between the two takes.
+        ok.("the two loops are separated by their start-cycle gap",
+            { var d = (~tracks[1][\startPhase] - ~tracks[0][\startPhase]) % 1;
+              var g = ((~tracks[1][\startCycle] - ~tracks[0][\startCycle])
+                  / ~numLoopCycles) % 1;
+              ("        (seam gap " ++ d.round(0.0001)
+                  ++ " of a phrase, cycle gap " ++ g.round(0.0001) ++ ")").postln;
+              ((d - g + 0.5) % 1 - 0.5).abs < 0.001 }.value);
         // grid position = start cycle offset minus start phase; equal for aligned loops
         ok.("both loops share one grid",
             ((~tracks[0][\startCycle] - (~tracks[0][\startPhase] * ~numLoopCycles))

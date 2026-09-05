@@ -197,12 +197,12 @@ the system default device):
 ```powershell
 $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/panic-test.scd       # 26 passed
-& $sc -D d:/livelooper/test/looper-test.scd      # 33 passed
+& $sc -D d:/livelooper/test/looper-test.scd      # 34 passed
 & $sc -D d:/livelooper/test/dashboard-test.scd   # 49 passed
 & $sc -D d:/livelooper/test/nav-test.scd         # 29 passed
 & $sc -D d:/livelooper/test/stereo-test.scd      # 12 passed
 & $sc -D d:/livelooper/test/fx-test.scd          # 19 passed
-& $sc -D d:/livelooper/test/join-test.scd        # 36 passed
+& $sc -D d:/livelooper/test/join-test.scd        # 44 passed
 & $sc -D d:/livelooper/test/select-test.scd      # 65 passed
 ```
 
@@ -281,6 +281,9 @@ on beat 1 is heard arriving soft — that is what "the join is too long" was. If
 a hit on the 1 you can set it to `0`: a click coincident with a loud attack is masked and
 inaudible anyway.
 
+**`~headWindowSecs`** (default 30 ms) opens the take that much *before* the downbeat and
+cuts the loop there instead. It moves the **seam**, not the audio — see below.
+
 **`~tailSecs`** (default 0.5 s) keeps recording past the loop end, and plays that extra
 audio back **added on top** of the loop start, decaying over its own length. It is not a
 second copy of the start — `buf[frames]` is literally the sample after `buf[frames-1]`,
@@ -290,6 +293,25 @@ repetition exactly as it would if a drummer repeated the phrase.
 Because the tail is a continuation rather than a duplicate, nothing has to sum to unity,
 so there is no equal-power/equal-gain question left to get wrong. `~tailCurve` below 1
 holds the tail near full early and preserves the natural shape of the decay.
+
+### Why the head window exists
+
+The buffer is a closed circle of exactly one phrase, and whatever sits *just before* the
+cut was recorded at the **end** of the take — a different pass round the loop.
+
+So if you strike the 1 slightly early and the cut sits on the 1, the strike's onset
+belongs to one pass and its body to another. The loop replays a truncated attack: a crash
+that starts halfway in, a snare with the crack shaved off. Cutting the circle 30 ms
+earlier puts the whole strike on one side of it.
+
+It also lands the seam somewhere quiet rather than on top of a transient, which is the
+easiest place for a join to hide.
+
+**It is not `~loopOffset`.** That moves the audio against the grid — turn it the wrong way
+and everything sounds early or late. The head window moves the grid's *cut point* against
+the audio, and the loop stays exactly one phrase long either way, so nothing drifts and
+nothing shifts in time. The window is dead space the loop has to carry, so keep it near
+the size of the rush you actually play.
 
 > **The one catch:** a long tail only sounds right if what happens past the loop point is
 > *decay*. Keep playing through it and the tail holds your performance of the next
