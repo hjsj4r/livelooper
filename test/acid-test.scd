@@ -16,7 +16,7 @@
 //  Run it headless (no ZOOM H8 needed):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/acid-test.scd
 //
-//  Expect: "37 passed, 0 failed".
+//  Expect: "40 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, report, open, shut, swept, flat, ducked;
@@ -243,6 +243,51 @@ s.waitForBoot({
         1.0.wait;
         ok.("everything returns to unity",
             (~duckBus[1].getSynchronous - 1).abs < 0.05);
+
+        "".postln; "--- DUCK REACHES ONLY THE ORBIT IT NAMES ---".postln;
+        // Every orbit in this rig shares ONE output bus (startup.scd does
+        // `~dirt.start(port, ~dirtBus.index ! ~dirtOrbits)`), and the first ducker sat on
+        // orbit.outBus — so it scaled the whole Tidal mix, and the kick carrying the duck
+        // ducked itself. Three targets at depth 0.8 cost about 42 dB on every kick.
+        //
+        // The control-bus checks above all passed while that was happening: a bus dipping
+        // says nothing about WHICH audio it attenuates. This measures the audio.
+        SynthDef(\cap, { |buf, in|
+            RecordBuf.ar(In.ar(in, 2).sum, buf, loop: 0, doneAction: 2);
+        }).add;
+        s.sync;
+        ~onOrbit = { |orbit, duckStr|
+            var buf = Buffer.alloc(s, (s.sampleRate * 1.0).asInteger, 1);
+            var a = nil;
+            s.sync;
+            Synth(\cap, [buf: buf, in: 0], addAction: \addToTail);
+            0.05.wait;
+            NetAddr("127.0.0.1", ~dirtPort).sendMsg('/dirt/play',
+                "_id_", 1, "cps", 0.5, "cycle", 0.0, "delta", 0.5,
+                "s", "subkick", "orbit", orbit, "sustain", 0.6, "subfreq", 60,
+                "subdecay", 0.5);
+            duckStr !? {
+                // the trigger rides on orbit 3, silent, so it is never what is measured
+                NetAddr("127.0.0.1", ~dirtPort).sendMsg('/dirt/play',
+                    "_id_", 2, "cps", 0.5, "cycle", 0.0, "delta", 0.5,
+                    "s", "subkick", "orbit", 3, "sustain", 0.05, "gain", 0.01,
+                    "duck", duckStr, "duckdepth", 0.9, "duckattack", 0.6);
+            };
+            1.2.wait;
+            buf.loadToFloatArray(0, buf.numFrames, { |x| a = x });
+            while { a.isNil } { 0.05.wait };
+            buf.free;
+            (a.squared.sum / a.size).sqrt;
+        };
+        ~base  = ~onOrbit.(2, nil);
+        ~named = ~onOrbit.(2, "2");
+        ~other = ~onOrbit.(2, "1");
+        ("        (named orbit -> " ++ (~named / ~base.max(1e-9)).round(0.001)
+            ++ " of its level; unnamed orbit -> "
+            ++ (~other / ~base.max(1e-9)).round(0.001) ++ ")").postln;
+        ok.("something was audible to begin with", ~base > 0.005);
+        ok.("the named orbit is ducked",      (~named / ~base.max(1e-9)) < 0.5);
+        ok.("an unnamed orbit is NOT ducked", (~other / ~base.max(1e-9)) > 0.8);
 
         "".postln;
         ("======== " ++ pass ++ " passed, " ++ fail ++ " failed ========").postln;

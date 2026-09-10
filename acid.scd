@@ -134,7 +134,18 @@ fork {
     ~duckBus[i].set(1);
 };
 
-// Reads its orbit's bus and applies it as gain. Sits at the tail of the orbit's chain.
+// Reads a bus and applies the duck as gain, in place.
+//
+// WHICH BUS IS THE WHOLE PROBLEM. This first ran on orbit.outBus — and in this rig
+// startup.scd gives EVERY orbit the same out bus:
+//     ~dirt.start(~dirtPort, ~dirtBus.index ! ~dirtOrbits);
+// so eight duckers all read and ReplaceOut the same shared bus. Ducking "orbit 1"
+// scaled the entire Tidal mix, and since the kick sending the duck is also on that bus,
+// the kick ducked ITSELF. Three targets at depth 0.8 meant 0.2 * 0.2 * 0.2 — the whole
+// patch dropped about 42 dB on every kick.
+//
+// dryBus is per-orbit (DirtOrbit allocates its own), so ducking there is genuinely
+// per-orbit no matter how the outputs are shared downstream.
 SynthDef(\duckGlobal, { |out, duckbus|
     var sig = In.ar(out, ~dirt.numChannels);
     ReplaceOut.ar(out, sig * In.kr(duckbus, 1).lag(0.005));
@@ -152,11 +163,17 @@ SynthDef(\duckTrigger, { |sustain = 1, duckdepth = 0.8, duckattack = 0.16, duckb
 
 s.sync;
 
-// The receiving side: one always-on ducker per orbit.
+// The receiving side: one always-on ducker per orbit, on that orbit's OWN dry bus.
+//
+// Placed immediately BEFORE dirt_monitor — the last thing in the orbit's chain, and the
+// thing that sums dry + effects onto the (shared) output. That puts the ducker after the
+// event synths have written, and before anything leaves the orbit. Reverb and delay
+// tails ride over the duck rather than being pumped by it, which is usually what you
+// want anyway.
 ~duckSynths !? { ~duckSynths.do(_.free) };
 ~duckSynths = ~dirt.orbits.collect { |orbit, i|
-    Synth(\duckGlobal, [out: orbit.outBus, duckbus: ~duckBus[i]],
-        orbit.globalEffects.last.synth, \addAfter);
+    Synth(\duckGlobal, [out: orbit.dryBus.index, duckbus: ~duckBus[i]],
+        orbit.globalEffects.last.synth, \addBefore);
 };
 
 // The sending side. `duck` takes the orbits to duck, as a Tidal-style "0:1:4" string.

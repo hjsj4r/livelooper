@@ -207,7 +207,7 @@ $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/fx-test.scd          # 19 passed
 & $sc -D d:/livelooper/test/join-test.scd        # 44 passed
 & $sc -D d:/livelooper/test/select-test.scd      # 65 passed
-& $sc -D d:/livelooper/test/acid-test.scd        # 35 passed
+& $sc -D d:/livelooper/test/acid-test.scd        # 40 passed
 ```
 
 None of them needs the H8, and **they're safe to run while your rig is booted** — each
