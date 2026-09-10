@@ -16,7 +16,7 @@
 //  Run it headless (no ZOOM H8 needed):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/acid-test.scd
 //
-//  Expect: "26 passed, 0 failed".
+//  Expect: "35 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, report, open, shut, swept, flat, ducked;
@@ -146,6 +146,58 @@ s.waitForBoot({
         flat = report.("  no envelope          ", [lpbase: 100, lpenv: 0, lpq: 0.05]);
         ok.("lpenv 0 does not sweep at all",
             (flat[0] / flat[1].max(1e-6)).inclusivelyBetween(0.5, 2.0));
+
+        "".postln; "--- THE SUB KICK CARRIES LOW END ---".postln;
+        // The point of the layer is energy below 80 Hz. Measure it the same way the
+        // brightness test does, but at the other end of the spectrum: record the signal
+        // raw and low-passed at once, and compare.
+        ok.("subkick built", SynthDescLib.global.at(\subkick).notNil);
+        [\subfreq, \subdrop, \subtime, \subdecay, \subdrive].do { |k|
+            ok.("subkick accepts " ++ k,
+                SynthDescLib.global.at(\subkick).controlNames.includes(k));
+        };
+        SynthDef(\grabLow, { |bufRaw, bufLo, in|
+            var sig = In.ar(in, 2).sum;
+            RecordBuf.ar(sig, bufRaw, loop: 0);
+            RecordBuf.ar(LPF.ar(LPF.ar(sig, 80), 80), bufLo, loop: 0, doneAction: 2);
+        }).add;
+        s.sync;
+
+        ~lowOf = { |synthName, args|
+            var raw = Buffer.alloc(s, (s.sampleRate * 0.8).asInteger, 1);
+            var lo  = Buffer.alloc(s, (s.sampleRate * 0.8).asInteger, 1);
+            var rawA = nil, loA = nil, out;
+            var rms = { |a| (a.squared.sum / a.size).sqrt };
+            s.sync;
+            Synth(\grabLow, [bufRaw: raw, bufLo: lo, in: ~probe.index],
+                addAction: \addToTail);
+            Synth(synthName, [out: ~probe.index, sustain: 0.5] ++ args,
+                addAction: \addToHead);
+            1.0.wait;
+            raw.loadToFloatArray(0, raw.numFrames, { |a| rawA = a });
+            lo.loadToFloatArray(0, lo.numFrames, { |a| loA = a });
+            while { rawA.isNil or: { loA.isNil } } { 0.05.wait };
+            raw.free; lo.free;
+            // how much of the total energy is under 80 Hz, and how long it lasts
+            out = [ rms.(loA) / rms.(rawA).max(1e-9), rms.(loA) ];
+            out;
+        };
+
+        ~sub  = ~lowOf.(\subkick, [subfreq: 50, subdrop: 1.6, subtime: 0.04,
+            subdecay: 0.32, subdrive: 1.5, subclick: 0.06]);
+        ~lead = ~lowOf.(\sawtooth, [freq: 43.midicps, lpbase: 100, lpenv: 5.7,
+            lps: 0.2, lpd: 0.12, lpq: 0.3]);
+        ("        (subkick: " ++ (~sub[0] * 100).round(0.1)
+            ++ "% of its energy under 80 Hz)").postln;
+        ("        (the 98 Hz saw, for scale: " ++ (~lead[0] * 100).round(0.1)
+            ++ "%)").postln;
+        ok.("most of the subkick IS sub",  ~sub[0] > 0.7);
+        ok.("and there is real level down there", ~sub[1] > 0.02);
+        // the pitch drop has to actually drop, or it is a hum not a kick
+        ~flatSub = ~lowOf.(\subkick, [subfreq: 50, subdrop: 0, subtime: 0.04,
+            subdecay: 0.32, subdrive: 1.5, subclick: 0]);
+        ok.("subdrop 0 is a different sound from subdrop 1.6",
+            (~sub[1] - ~flatSub[1]).abs > (~flatSub[1] * 0.02));
 
         "".postln; "--- DUCKING ---".postln;
         ok.("duck is registered as a module",

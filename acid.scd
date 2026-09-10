@@ -81,6 +81,35 @@ SynthDef(\supersaw, { |out, sustain = 1, freq = 440, pan = 0, accelerate = 0,
 }).add;
 );
 
+// ── Sub kick ────────────────────────────────────────────────
+// A kick sample carries the attack; this carries the weight. Layering the two is how
+// nearly every produced kick gets its depth — one sample rarely has both a click that
+// cuts and a body that lasts.
+//
+// The pitch drop is the whole trick: starting an octave or two up and falling to the
+// target in ~40 ms reads as the "thump" of a beater, and gives the ear a transient to
+// latch onto. Held at a fixed low pitch it just sounds like a hum.
+//
+// subdrive matters more than it looks on small speakers. Saturating a 50 Hz sine adds
+// harmonics at 100, 150, 200 Hz; a laptop speaker that cannot reproduce 50 Hz at all
+// still reproduces those, and the ear infers the missing fundamental. So the kick reads
+// as deep on a system that is physically incapable of playing the note.
+(
+SynthDef(\subkick, { |out, sustain = 1, pan = 0,
+        subfreq = 50, subdrop = 1.6, subtime = 0.04, subdecay = 0.32, subdrive = 1.5,
+        subclick = 0.06|
+    // falls subdrop octaves onto subfreq; curve -6 makes almost all of it happen early
+    var pitch = EnvGen.kr(Env([subdrop, 0], [subtime], curve: -6));
+    var amp   = EnvGen.ar(Env.perc(0.001, subdecay, 1, -4), doneAction: 2);
+    var sig   = SinOsc.ar(subfreq * (2 ** pitch));
+    // a short noise tick, so the kick still locates itself on a small speaker
+    var tick  = HPF.ar(WhiteNoise.ar, 1200)
+        * EnvGen.ar(Env.perc(0.0005, 0.012)) * subclick;
+    sig = (sig * subdrive).tanh / subdrive.max(1).sqrt;
+    Out.ar(out, DirtPan.ar((sig * amp) + tick, ~dirt.numChannels, pan, 1));
+}).add;
+);
+
 // ── Sidechain ducking ───────────────────────────────────────
 // Strudel's .duck("3:4:5:6") ducks those orbits from the pattern carrying it. SuperDirt
 // has no such thing, so this builds one: a control bus per orbit that the kick writes a
