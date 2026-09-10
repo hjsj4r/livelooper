@@ -88,7 +88,17 @@ SynthDef(\supersaw, { |out, sustain = 1, freq = 440, pan = 0, accelerate = 0,
 //
 // Global rather than per-event on purpose — a duck has to apply to whatever is already
 // sounding on that orbit, which an event-triggered synth cannot do.
+//
+// Everything below runs inside `fork`. It has to: creating a Synth from a SynthDef you
+// just added needs s.sync first, and s.sync yields — which only a Routine can do. At
+// top level, which is how this file is actually loaded, an unwrapped s.sync throws
+// "yield was called outside of a Routine" and takes the whole ducking section down
+// with it, silently, while the synths above still load fine.
 (
+fork {
+~dirt ?? {
+    Error("acid.scd: SuperDirt is not running. Evaluate startup.scd first.").throw
+};
 ~duckBus ?? { ~duckBus = () };
 ~dirt.orbits.do { |orbit, i|
     ~duckBus[i] ?? { ~duckBus[i] = Bus.control(s, 1) };
@@ -133,6 +143,10 @@ s.sync;
         };
     };
 }, { ~duck.notNil });
-);
 
-"=== acid.scd loaded — synths: sawtooth, supersaw | duck on all orbits ===".postln;
+// Inside the fork, so it prints when the duckers are genuinely up rather than when the
+// file finished being read.
+("=== acid.scd loaded — synths: sawtooth, supersaw | duck on "
+    ++ ~duckSynths.size ++ " orbits ===").postln;
+};
+);

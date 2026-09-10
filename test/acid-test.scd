@@ -16,7 +16,7 @@
 //  Run it headless (no ZOOM H8 needed):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/acid-test.scd
 //
-//  Expect: "25 passed, 0 failed".
+//  Expect: "26 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, report, open, shut, swept, flat, ducked;
@@ -40,7 +40,26 @@ s.waitForBoot({
         ~dirtPort = NetAddr.langPort;
         ~dirt = SuperDirt(2, s); ~dirt.start(~dirtPort, [0, 0, 0, 0]);
         2.0.wait;
-        "D:/livelooper/acid.scd".load;
+        // Load it the way a PERSON does: evaluated from the editor, at TOP LEVEL, not
+        // from inside a Routine. This matters more than it looks. The first version of
+        // this test loaded acid.scd inside this very fork, which handed the file a
+        // Routine it would never have in real use — so a top-level s.sync sailed through
+        // here and threw "yield was called outside of a Routine" for the user, taking
+        // the entire ducking section down silently while the synths still loaded.
+        // AppClock runs a plain function, so thisThread is not a Routine: same as the IDE.
+        ~acidLoad = nil;
+        AppClock.sched(0, {
+            try { "D:/livelooper/acid.scd".load; ~acidLoad = \ok }
+                { |e| ~acidLoad = e.errorString };
+            nil;
+        });
+        while { ~acidLoad.isNil } { 0.1.wait };
+
+        "".postln; "--- IT LOADS THE WAY IT IS ACTUALLY LOADED ---".postln;
+        if (~acidLoad != \ok) { ("        (" ++ ~acidLoad ++ ")").postln };
+        ok.("loads at top level, outside a Routine", ~acidLoad == \ok);
+        // its own fork still has to finish before anything below is true
+        while { ~duckSynths.isNil } { 0.2.wait };
         2.0.wait;
 
         "".postln; "--- THE SYNTHS EXIST ---".postln;
