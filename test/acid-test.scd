@@ -16,7 +16,7 @@
 //  Run it headless (no ZOOM H8 needed):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/acid-test.scd
 //
-//  Expect: "35 passed, 0 failed".
+//  Expect: "37 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, report, open, shut, swept, flat, ducked;
@@ -206,20 +206,43 @@ s.waitForBoot({
             ~duckBus.notNil and: { ~duckBus[0].notNil });
         ok.("one ducker synth per orbit",
             ~duckSynths.notNil and: { ~duckSynths.size == ~dirt.orbits.size });
-        // the bus sits at unity until something ducks it
         ducked = ~duckBus[0].getSynchronous;
         ok.("the bus rests at unity gain", (ducked - 1).abs < 0.001);
-        // fire a duck and catch the dip while it is happening
-        Synth(\duckTrigger, [sustain: 0.5, duckdepth: 0.8, duckattack: 0.3,
-            duckbus: ~duckBus[0].index]);
-        0.05.wait;
-        ducked = ~duckBus[0].getSynchronous;
-        ("        (gain during the duck: " ++ ducked.round(0.001) ++ ")").postln;
-        ok.("a trigger pulls the gain down", ducked < 0.5);
-        0.5.wait;
-        ducked = ~duckBus[0].getSynchronous;
-        ("        (gain after it recovers: " ++ ducked.round(0.001) ++ ")").postln;
-        ok.("and it comes back to unity", (ducked - 1).abs < 0.05);
+
+        "".postln; "--- DUCK THROUGH A REAL EVENT ---".postln;
+        // THIS is the test that matters, and its absence cost a working feature.
+        // The checks above all passed while ducking was completely broken: the module
+        // body runs inside DirtEvent`s `event.use { }`, so its ~duckBus resolved against
+        // the EVENT`s environment and came back nil, throwing on every single event.
+        // Firing \duckTrigger by hand never touched that path. Only a real /dirt/play
+        // message does.
+        //
+        // Sampled repeatedly rather than once: SuperDirt bundles the trigger with its
+        // own latency, so the dip lands some tenths of a second after the message and a
+        // single well-timed read would be luck.
+        ~minOf = { |bus, secs|
+            var lo = 2, t = 0;
+            while { t < secs } { lo = lo.min(bus.getSynchronous); 0.02.wait; t = t + 0.02 };
+            lo;
+        };
+        ~duckBus[0].set(1); ~duckBus[1].set(1); ~duckBus[2].set(1);
+        0.3.wait;
+        NetAddr("127.0.0.1", ~dirtPort).sendMsg('/dirt/play',
+            "_id_", 1, "cps", 0.5, "cycle", 0.0, "delta", 0.5,
+            "s", "sawtooth", "orbit", 0, "sustain", 0.2, "freq", 110,
+            "duck", "1:2", "duckdepth", 0.8, "duckattack", 0.4);
+        ~e1 = ~minOf.(~duckBus[1], 1.2);
+        ~e2 = ~duckBus[2].getSynchronous;
+        ~e0 = ~duckBus[0].getSynchronous;
+        ("        (targeted orbit 1 fell to " ++ ~e1.round(0.001) ++ ")").postln;
+        ok.("a real event ducks the orbits it names", ~e1 < 0.5);
+        ok.("...and both of them",  ~e2 < 1.0);
+        // orbit 0 was not named, so it must be untouched
+        ("        (untargeted orbit 0 sat at " ++ ~e0.round(0.001) ++ ")").postln;
+        ok.("orbits it does not name are untouched", (~e0 - 1).abs < 0.05);
+        1.0.wait;
+        ok.("everything returns to unity",
+            (~duckBus[1].getSynchronous - 1).abs < 0.05);
 
         "".postln;
         ("======== " ++ pass ++ " passed, " ++ fail ++ " failed ========").postln;

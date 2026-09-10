@@ -159,19 +159,31 @@ s.sync;
         orbit.globalEffects.last.synth, \addAfter);
 };
 
-// The sending side. `duck` takes the orbits to duck, as a Tidal-style "3:4:5:6" string
-// or a list. Registered as a SuperDirt module so it fires from a pattern.
-~dirt.addModule('duck', { |dirtEvent|
-    var targets = ~duck.asString.split($:).collect { |x| x.asInteger };
-    targets.do { |orbitIndex|
-        ~duckBus[orbitIndex] !? { |bus|
-            Synth(\duckTrigger, [
-                sustain: ~sustain, duckdepth: (~duckdepth ? 0.8),
-                duckattack: (~duckattack ? 0.16), duckbus: bus.index
-            ], s.defaultGroup, \addToHead);
+// The sending side. `duck` takes the orbits to duck, as a Tidal-style "0:1:4" string.
+//
+// THE ~ TRAP, and it is a nasty one. DirtEvent:play runs every module inside
+// `event.use { ... }`, so a `~name` in here resolves against the EVENT's Environment,
+// not the interpreter's. That is exactly what you want for ~duck, ~sustain and
+// ~duckdepth — they ARE event parameters. It is exactly wrong for ~duckBus, which is a
+// global: it comes back nil, and every single event throws
+//     ERROR: Message 'at' not understood. RECEIVER: nil
+// So the buses are captured lexically, in a plain variable, before the module is built.
+// `server` likewise: `s` happens to work, but relying on that is the same gamble.
+{
+    var buses = ~duckBus, server = s;
+    ~dirt.addModule('duck', { |dirtEvent|
+        // ~duck / ~sustain / ~duckdepth / ~duckattack DO come from the event — correct.
+        var targets = ~duck.asString.split($:).collect { |x| x.asInteger };
+        var dep = ~duckdepth ? 0.8, att = ~duckattack ? 0.16, sus = ~sustain ? 1;
+        targets.do { |orbitIndex|
+            buses[orbitIndex] !? { |bus|
+                Synth(\duckTrigger, [
+                    sustain: sus, duckdepth: dep, duckattack: att, duckbus: bus.index
+                ], server.defaultGroup, \addToHead);
+            };
         };
-    };
-}, { ~duck.notNil });
+    }, { ~duck.notNil });
+}.value;
 
 // Inside the fork, so it prints when the duckers are genuinely up rather than when the
 // file finished being read.
