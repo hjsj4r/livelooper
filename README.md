@@ -88,6 +88,8 @@ sequence — map it rather than guessing:
 | `looper.scd`   | Multitrack loopers (one per input) + faders + FX |
 | `click.scd`    | Tempo-locked click, right channel |
 | `settings.scd` | Config values editable from the dashboard, and written back |
+| `acid.scd`     | sawtooth + supersaw with a filter envelope, and a sidechain ducker |
+| `acid.tidal`   | An acid patch translated from Strudel (needs `acid.scd`) |
 | `dashboard.scd`| Streams state to / takes commands from the web dashboard |
 | `dashboard/server.js` | Pure-Node bridge (SC ↔ browser). Run: `node server.js` |
 | `dashboard/index.html`| The web dashboard UI |
@@ -100,6 +102,7 @@ sequence — map it rather than guessing:
 | `tools/latency-measure.scd` | Measures the audio round trip, for `~loopOffset` |
 | `test/nav-test.scd` | Regression test for selection + level control |
 | `test/select-test.scd` | Regression test for pins, stop/start, and settings |
+| `test/acid-test.scd` | Regression test for the acid synths and the ducker |
 | `test/panic-test.scd`  | Regression test for Ctrl+. recovery (see below) |
 | `test/looper-test.scd` | Regression test for the record path + signal path |
 | `test/dashboard-test.scd` | Regression test for the dashboard message rate |
@@ -204,6 +207,7 @@ $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/fx-test.scd          # 19 passed
 & $sc -D d:/livelooper/test/join-test.scd        # 44 passed
 & $sc -D d:/livelooper/test/select-test.scd      # 65 passed
+& $sc -D d:/livelooper/test/acid-test.scd        # 25 passed
 ```
 
 None of them needs the H8, and **they're safe to run while your rig is booted** — each
