@@ -1082,7 +1082,10 @@ function applyVsts(args) {
   vsts.forEach((v, idx) => {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td class="idx">${idx}</td><td>${esc(v.name)}</td><td class="dim">${esc(v.plugin)}</td>` +
-      `<td>${esc(v.state)}</td><td><button class="rm">Remove</button></td>`;
+      `<td>${esc(v.state)}</td><td style="white-space:nowrap">` +
+      `<button class="edit" title="open the plugin's own window" ${v.state === 'open' ? '' : 'disabled'}>Editor</button> ` +
+      `<button class="rm">Remove</button></td>`;
+    tr.querySelector('.edit').onclick = () => cmd('/cmd/vstEditor', [idx]);
     tr.querySelector('.rm').onclick = () => {
       if (!confirm(`Remove "${v.name}"? Tidal patterns using # s "${v.name}" go silent.`)) return;
       cmd('/cmd/vstRemove', [idx]);
