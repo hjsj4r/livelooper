@@ -58,7 +58,7 @@
     { v.asCompileString };
 };
 ~layoutKeys = [\audioDevice, \inDevice, \outDevice, \sampleRate, \numInputs, \numOutputs,
-    \trackInputs, \trackNames];
+    \trackInputs, \trackNames, \vstInstruments];
 
 // Push a value to things already running. Values with no `apply` are read where they are
 // needed (at record time, or on the next beat), so they need nothing here.
