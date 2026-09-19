@@ -12,11 +12,24 @@
 
 // ── Audio interface ─────────────────────────────────────────
 // Exact device name as SuperCollider sees it; nil = system default.
-// Don't know the string?   ServerOptions.devices.do(_.postln);
+// Don't know the string? The dashboard's Setup view scans and lists every device with
+// its input/output counts (or in the editor:  ~scanDevices.();  then  ~devices).
+//
+// ~audioDevice is used for BOTH input and output — the normal case, and the only one an
+// ASIO driver allows. Windows' other driver classes (WASAPI, MME, DirectSound, WDM-KS)
+// expose input-only and output-only endpoints, so to record through one device and play
+// through another set ~audioDevice = nil and name the two halves separately.
+// All of these are what the dashboard writes when you pick a device and press Save.
 ~audioDevice = "ASIO : ZOOM H8 Audio Driver";
-~sampleRate  = 44100;        // H8 ASIO requires 44100
-~numInputs   = 12;           // raise if a jack maps past index 11 (tools/input-scan.scd)
+~inDevice    = nil;          // only read when ~audioDevice is nil
+~outDevice   = nil;          // only read when ~audioDevice is nil
+~sampleRate  = 44100;        // H8 ASIO requires 44100. nil = whatever the device prefers
+~numInputs   = 12;           // raise if a jack maps past index 11 (tools/input-scan.scd).
+                             // Asking for MORE inputs than the device has is safe — the
+                             // extra channels are simply silent — so the scan's count is
+                             // a floor, not a ceiling.
 ~numOutputs  = 2;            // H8 has only 2 physical outs (L = music, R = click hack)
+~scanPort    = 57199;        // spare UDP port for the throwaway scsynth the device scan runs
 ~numBuffers  = 1024 * 16;
 ~memSize     = 8192 * 16;    // server real-time memory, KB
 
@@ -54,12 +67,23 @@
 //
 // Mapped with tools/input-scan.scd. SC 10 and 11 carry the H8's MIX (they light up for
 // every source), so they are deliberately not tracks — 2 and 3 were unused.
+//
+// This is the layout the rig BOOTS with. Tracks can also be added, removed, renamed and
+// re-wired from the dashboard's Setup view while the rig runs; Save writes the result
+// back to these two lines.
 ~trackInputs   = [[0, 1], 5, 9, 7, 8, 4, 6];
 
 // Display names, in the same order. Shown on the dashboard strips and in the post
 // window. tools/input-scan.scd prints this line alongside ~trackInputs so the two
 // cannot drift apart. A missing name falls back to "Track N".
 ~trackNames    = ["mic", "bass", "synth", "voice", "spdsx", "bomboclat", "overhead"];
+
+// Ceiling on tracks the dashboard will let you add. Each one costs a looper + FX synth
+// (cheap) and a pre-allocated buffer: at the defaults below that is ~7 MB mono, ~14 MB
+// stereo. Twelve stereo tracks is ~170 MB, fine on this 8 GB machine; the practical
+// limit is the interface's input count and a strip list you can still navigate with a
+// stick mid-set.
+~maxTracks     = 12;
 
 // Default length of a NEW loop, in bars (one Tidal cycle = one bar at ~clickDiv 4).
 // Each track keeps its own length, so a 4-bar part can sit under an 8-bar one — they
@@ -99,7 +123,7 @@
 //     0.08 +          only if you play very far ahead; the window is dead
 //                     space the loop has to carry
 // Capped at a quarter of the loop, and read when you hit RECORD.
-~headWindowSecs = 0.03;
+~headWindowSecs = 0.05;
 
 // TAIL — recording keeps running past the loop end by this much, and that extra audio is
 // played back ADDED on top of the loop start, decaying away over its own length. This is
@@ -119,10 +143,10 @@
 // downbeat, landing on top of the recorded one — a real flam. The fade-out softens it,
 // and per-track lengths are the escape hatch: long on overheads, short on a part you
 // play continuously.
-~tailSecs  = 0.5;
+~tailSecs  = 0.18;
 // Tail decay shape. Below 1 holds the tail near full early and preserves the natural
 // shape of the decay; 1 is a straight line; above 1 drops it away quickly.
-~tailCurve = 0.5;
+~tailCurve = 0.45;
 
 // Buffers are sized for ~tailSecs on top of the longest loop, and a take caps the tail
 // at a quarter of the buffer so a long tail can never eat the loop itself.
@@ -202,5 +226,9 @@
 // ── Dashboard ───────────────────────────────────────────────
 ~dashPort = 57130;           // the Node bridge listens here for state from SC.
                              // The browser's HTTP port is set in dashboard/server.js.
+// Per-track input/output level meters, in updates per second. They only flow while a
+// dashboard is open and visible (the browser keeps a subscription alive), so a closed
+// dashboard costs nothing and the idle-traffic guarantee still holds. 0 disables them.
+~meterRate = 12;
 
 "config.scd loaded.".postln;

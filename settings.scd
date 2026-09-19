@@ -4,11 +4,12 @@
 //  Loaded by startup.scd, before dashboard.scd.
 //
 //  WHAT IS AND IS NOT HERE
-//  Only values that can change in a RUNNING rig. Anything that decides how the server or
-//  the tracks were built — audio device, sample rate, channel counts, ~trackInputs,
-//  ~minCps, ~maxLoopCycles, ports — is deliberately absent: changing those means
-//  rebuilding buffers and synths, which is a restart, and a slider that silently did
-//  nothing would be worse than no slider.
+//  ~settingsSpec holds only values that can change in a RUNNING rig, as sliders. The
+//  rig's SHAPE — audio device, sample rate, channel counts, ~trackInputs / ~trackNames —
+//  is not a slider: changing it means rebuilding synths and buffers or restarting the
+//  server, so the dashboard changes those through their own actions (~useDevice,
+//  ~addTrack, ~setTrackInput...) and this file only knows how to WRITE them back
+//  (~layoutKeys). ~minCps, ~maxLoopCycles and the ports remain editor-only.
 //
 //  WHEN A CHANGE BITES
 //  Three kinds, and the dashboard says which is which:
@@ -28,6 +29,36 @@
 // Keys changed in this session and not yet written to the file. Survives a reload of
 // this file so that re-evaluating does not silently "clean" a dirty setting.
 ~settingsDirty = ~settingsDirty ? [];
+
+~settingsMarkDirty = { |key|
+    if (~settingsDirty.any { |k| k == key.asSymbol }.not) {
+        ~settingsDirty = ~settingsDirty ++ [key.asSymbol];
+    };
+    ~settingsDirty;
+};
+
+// ── The rig's shape: device and track layout ────────────────
+// These are NOT sliders. They decide how the server and the tracks were built, so the
+// dashboard changes them through their own actions (~useDevice, ~addTrack, ...), which
+// do the rebuild. What this list adds is the last step: writing the result back to
+// config.scd on Save, with the same line surgery as the numbers, so a layout built at
+// soundcheck is the one the rig boots with tomorrow.
+//
+// Each value is written the way a person would have typed it: a String quoted, nil as
+// nil, a list of tracks as [[0, 1], 5, 9] with no decoration.
+~settingsValueString = { |v|
+    case
+    { v.isNil }        { "nil" }
+    { v.isString }     { v.asCompileString }
+    { v.isKindOf(Symbol) } { v.asString.asCompileString }
+    { v.isNumber }     { if (v.frac == 0) { v.asInteger.asString } { v.asString } }
+    { v.isSequenceableCollection } {
+        "[" ++ v.collect({ |x| ~settingsValueString.(x) }).join(", ") ++ "]"
+    }
+    { v.asCompileString };
+};
+~layoutKeys = [\audioDevice, \inDevice, \outDevice, \sampleRate, \numInputs, \numOutputs,
+    \trackInputs, \trackNames];
 
 // Push a value to things already running. Values with no `apply` are read where they are
 // needed (at record time, or on the next beat), so they need nothing here.
@@ -103,9 +134,7 @@
         if (e[\step] >= 1) { v = v.round(e[\step]) };
         currentEnvironment[e[\key]] = v;
         e[\apply] !? { e[\apply].value(v) };
-        if (~settingsDirty.any { |k| k == e[\key] }.not) {
-            ~settingsDirty = ~settingsDirty ++ [e[\key]];
-        };
+        ~settingsMarkDirty.(e[\key]);
         v;
     };
 };
@@ -146,14 +175,16 @@
     } {
         text  = File.readAllString(path);
         lines = text.split($\n);
-        ~settingsSpec.do { |e|
-            var key = e[\key];
+        // numbers from the slider spec, then the rig's shape — same surgery for both
+        (~settingsSpec.collect({ |e| [e[\key], ~settingsFormat.(currentEnvironment[e[\key]] ? 0, e[\step])] })
+            ++ ~layoutKeys.collect({ |k| [k, ~settingsValueString.(currentEnvironment[k])] }))
+        .do { |pair|
+            var key = pair[0], value = pair[1];
             var idx = (0 .. lines.size - 1).detect { |i| ~settingsIsAssign.(lines[i], key) };
             if (idx.isNil) {
                 missing = missing ++ [key];
             } {
-                lines[idx] = ~settingsRewrite.(lines[idx],
-                    ~settingsFormat.(currentEnvironment[key] ? 0, e[\step]));
+                lines[idx] = ~settingsRewrite.(lines[idx], value);
                 written = written ++ [key];
             };
         };
@@ -175,9 +206,18 @@
 // Re-read config.scd and push everything live. Note this reloads the WHOLE file, so
 // runtime values that happen to live there too (~clickAmp) go back to their written
 // defaults — which is what "reload from file" ought to mean.
+//
+// The track layout is rebuilt if the file's differs from the session's — which clears
+// any loops, so it only happens when the layout really changed. The DEVICE is not
+// switched: that is a server restart, and "reload" should not silently do one. The
+// dashboard shows the file's device beside the running one; ~rebootRig.() applies it.
 ~settingsReload = {
+    var inputsBefore = ~trackInputs.deepCopy, namesBefore = ~trackNames.deepCopy;
     ~settingsPath.().load;
     ~settingsSpec.do { |e| e[\apply] !? { e[\apply].value(currentEnvironment[e[\key]]) } };
+    if ((~trackInputs != inputsBefore) or: { ~trackNames != namesBefore }) {
+        ~rebuildTracks !? { ~rebuildTracks.() };
+    };
     ~settingsDirty = [];
     "settings: reloaded from config.scd".postln;
     ~settingsSpec.size;

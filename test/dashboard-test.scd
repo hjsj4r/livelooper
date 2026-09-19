@@ -6,7 +6,7 @@
 //  Run it headless (does NOT need the ZOOM H8 — boots the system default device):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/dashboard-test.scd
 //
-//  Expect: "49 passed, 0 failed".
+//  Expect: "50 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok;
@@ -205,13 +205,16 @@ s.waitForBoot({
         ok.("spec covers every setting",
             ((lastSpec.size - 1) / 7) == ~settingsSpec.size);
         ok.("config values arrive",     lastConfig.notNil);
-        ok.("values are 3 fields each", ((lastConfig.size - 1) % 3) == 0);
+        // /config leads with how many LAYOUT keys (device, tracks) are unsaved — they
+        // have no slider row, but the Save button counts them — then 3 fields per value
+        ok.("config leads with the layout's unsaved count", lastConfig[1].isNumber);
+        ok.("values are 3 fields each", ((lastConfig.size - 2) % 3) == 0);
 
         me.sendMsg('/cmd/setConfig', "tailSecs", 0.33);
         0.4.wait;
         ok.("setConfig over OSC moves the value", (~tailSecs - 0.33).abs < 0.001);
         ok.("...and reports it back dirty",
-            { var i = (1, 4 .. lastConfig.size - 1).detect { |k|
+            { var i = (2, 5 .. lastConfig.size - 1).detect { |k|
                 lastConfig[k].asString == "tailSecs" };
               i.notNil and: { lastConfig[i + 2] == 1 } }.value);
 

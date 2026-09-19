@@ -21,7 +21,10 @@ const SC_HOST     = '127.0.0.1';
 const SC_SEND_PORT = 57120;   // sclang listens here (same port SuperDirt uses)
 const SC_RECV_PORT = 57130;   // this bridge listens here for SC state
 
-// ---------- minimal OSC (types i, f, s) ----------
+// ---------- minimal OSC (types i, f, s, d) ----------
+// Strings are UTF-8 both ways. Audio device names on a Spanish Windows ("Varios
+// micrófonos ...") are not ASCII, and a name that comes back altered is a name
+// SuperCollider cannot find.
 const align4 = n => n + ((4 - (n % 4)) % 4);
 
 function decodeOSC(buf) {
@@ -29,7 +32,7 @@ function decodeOSC(buf) {
   const readStr = () => {
     let end = i;
     while (end < buf.length && buf[end] !== 0) end++;
-    const s = buf.toString('ascii', i, end);
+    const s = buf.toString('utf8', i, end);   // UTF-8: device names are not ASCII
     i = align4(end + 1);
     return s;
   };
@@ -49,7 +52,7 @@ function decodeOSC(buf) {
 
 function encodeOSC(address, args = []) {
   const parts = [];
-  const strBuf = s => { const b = Buffer.alloc(align4(s.length + 1)); b.write(s, 'ascii'); return b; };
+  const strBuf = s => { const n = Buffer.byteLength(s, 'utf8'); const b = Buffer.alloc(align4(n + 1)); b.write(s, 'utf8'); return b; };
   parts.push(strBuf(address));
   let tags = ',';
   const argBufs = [];

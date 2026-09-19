@@ -17,8 +17,8 @@
     font: 15px/1.4 -apple-system, Segoe UI, Roboto, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 1200px; margin: 0 auto; padding: 24px 20px 60px; }
-  .topbar { display: flex; align-items: center; gap: 16px; margin-bottom: 22px; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 18px 20px 60px; }
+  .topbar { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; flex-wrap: wrap; }
   .title { font-weight: 700; letter-spacing: .04em; font-size: 18px; }
   .conn { width: 9px; height: 9px; border-radius: 50%; background: var(--rec); box-shadow: 0 0 8px var(--rec); }
   .conn.on { background: var(--play); box-shadow: 0 0 8px var(--play); }
@@ -26,8 +26,38 @@
   .metric { font-variant-numeric: tabular-nums; color: var(--dim); font-size: 13px; }
   .metric b { color: var(--text); font-size: 20px; font-weight: 600; }
 
+  /* ---- views: Perform is the stage screen, Setup is soundcheck ---- */
+  .tabs { display: flex; gap: 4px; background: #10141b; border: 1px solid var(--line); border-radius: 9px; padding: 3px; }
+  .tabs button { background: none; border: 0; color: var(--dim); font: inherit; font-size: 13px; font-weight: 600;
+                 padding: 6px 16px; border-radius: 6px; cursor: pointer; letter-spacing: .03em; }
+  .tabs button.on { background: var(--panel); color: var(--text); box-shadow: 0 0 0 1px var(--line); }
+  .tabs button .kbd { margin-left: 6px; }
+  /* a dot on the Setup tab while anything is unsaved, so Perform never hides it */
+  .tabs button.warn::after { content: '●'; color: var(--dub); margin-left: 7px; font-size: 9px; vertical-align: middle; }
+  .view { display: none; }
+  .view.on { display: block; }
+  .kbd { display: inline-block; font: 600 10px/1 ui-monospace, Consolas, monospace; color: var(--dim);
+         border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 3px 5px; }
+
+  /* ---- rig status: banner when anything is off, a pill otherwise ---- */
+  .pill { font-size: 12px; font-weight: 600; letter-spacing: .04em; padding: 5px 11px; border-radius: 20px;
+          border: 1px solid var(--line); color: var(--dim); max-width: 340px; overflow: hidden;
+          text-overflow: ellipsis; white-space: nowrap; }
+  .pill.ready { color: var(--play); border-color: rgba(55,214,122,.4); }
+  .pill.booting { color: var(--dub); border-color: rgba(255,176,32,.5); animation: armed 1s ease-in-out infinite; }
+  .pill.failed, .pill.off { color: var(--rec); border-color: rgba(255,77,94,.5); }
+  .banner { display: none; align-items: center; gap: 14px; border: 1px solid rgba(255,77,94,.5);
+            background: rgba(255,77,94,.08); border-radius: 10px; padding: 12px 16px; margin-bottom: 16px; font-size: 14px; }
+  .banner.show { display: flex; }
+  .banner.booting { border-color: rgba(255,176,32,.5); background: rgba(255,176,32,.08); }
+  .banner b { font-weight: 700; }
+  .banner .spacer { flex: 1; }
+
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
   .label { text-transform: uppercase; letter-spacing: .08em; font-size: 11px; color: var(--dim); margin-bottom: 12px; }
+  .label.row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .dim { color: var(--dim); font-size: 12px; }
+  .note { color: var(--dim); font-size: 12px; margin-top: 10px; line-height: 1.5; }
 
   /* metronome */
   .beats { display: flex; gap: 10px; margin-bottom: 14px; }
@@ -35,17 +65,15 @@
   .beat.on { background: var(--accent); box-shadow: 0 0 16px var(--accent); transform: translateY(-2px); }
   .beat.on.down { background: #fff; box-shadow: 0 0 20px #fff; }
   .sweep { height: 6px; background: #10141b; border-radius: 3px; overflow: hidden; }
-  .fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), #7ec2ff); }
-  .clickvol { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
+  .fill { height: 100%; width: 0%; background: var(--accent); }
+
+  /* mixer */
+  .clickvol { display: flex; align-items: center; gap: 14px; padding: 8px 10px; }
   .clickvol .dim { flex: 0 0 128px; }
   .clickvol input { flex: 1; accent-color: var(--accent); }
-  /* the mixer levels are selectable too, so they show the same focus marker as a track */
   .mixitem { position: relative; border: 1px solid transparent; border-radius: 8px; }
   .mixitem.focus { border-color: var(--accent); }
-  .mixitem.focus::before {
-    content: '▸'; position: absolute; left: -14px; color: var(--accent); font-size: 15px;
-  }
-  /* loop length, click to step 4 <-> 8 */
+  .mixitem.focus::before { content: '▸'; position: absolute; left: -14px; color: var(--accent); font-size: 15px; }
   .bars { font-size: 11px; color: var(--dim); cursor: pointer; flex-shrink: 0;
           border: 1px solid var(--line); border-radius: 5px; padding: 3px 7px; }
   .bars:hover { border-color: var(--accent); color: var(--accent); }
@@ -58,223 +86,341 @@
   .padkey b { color: var(--text); font-weight: 600; min-width: 86px; display: inline-block; }
   .padkey span { color: var(--dim); }
   .glyph { font-size: 15px; line-height: 1; }
+  .keys { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px 18px; font-size: 13px; }
+  .keys div { display: flex; align-items: center; gap: 10px; color: var(--dim); }
+  .keys .kbd { color: var(--text); min-width: 28px; text-align: center; }
 
   /* tracks */
   .tracks { display: flex; flex-direction: column; gap: 10px; }
-  .track { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; row-gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
-  /* the SELECTED track — stepping onto it with the stick/d-pad selects it outright */
-  .track { position: relative; }
+  .track { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; row-gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; position: relative; }
   .track.focus { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-  /* Pinned is a different thing from focused: focus is where the stick IS, a pin is a
-     track parked in the selection. Both can be true, so they must be distinguishable at
-     a glance — pins get a left edge, focus gets the border. */
   .track.pinned { box-shadow: inset 3px 0 0 var(--pin); }
   .track.focus.pinned { box-shadow: inset 3px 0 0 var(--pin), 0 0 0 1px var(--accent) inset; }
+  .track.focus::before { content: '▸'; position: absolute; margin-left: -18px; color: var(--accent); font-size: 15px; }
   .pin { flex-shrink: 0; width: 22px; height: 22px; border-radius: 50%; cursor: pointer;
          border: 1.5px solid var(--idle); background: none; color: var(--idle);
          font-size: 11px; line-height: 1; padding: 0; }
   .pin:hover { border-color: var(--pin); color: var(--pin); }
   .track.pinned .pin { border-color: var(--pin); background: var(--pin); color: #04121f; }
-  /* an armed stop/start pulses, so you can see the toggle is waiting for the bar line */
   @keyframes armed { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
   .track-badge.armed { animation: armed 0.6s ease-in-out infinite; }
+  .track-id { width: 148px; flex-shrink: 0; cursor: pointer; }
+  .track-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .track-in { color: var(--dim); font-size: 12px; display: flex; align-items: center; gap: 8px; }
+  /* input meter: the signal at the jack. Sits beside the input label because that is the
+     question it answers — "is anything coming in on that one?" */
+  .meter { width: 54px; height: 5px; background: #10141b; border-radius: 3px; overflow: hidden; }
+  .meter > i { display: block; height: 100%; width: 0%; background: var(--play); transition: width .06s linear; }
+  .meter > i.hot { background: var(--rec); }
+  .track-badge { flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: .05em; padding: 4px 9px; border-radius: 5px; text-transform: uppercase; background: var(--idle); color: #04121f; }
+  .fader { flex: 1 1 140px; min-width: 100px; accent-color: var(--accent); }
+  .fxbar { width: 52px; height: 6px; background: #10141b; border-radius: 3px; overflow: hidden; flex-shrink: 0; }
+  .fxbar > i { display: block; height: 100%; width: 0%; background: var(--rec); transition: width .05s linear; }
+  .track.driven { border-color: var(--rec); }
+  .track button { background: #10141b; color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
+  .track button:hover { border-color: #3a4557; }
+  .track .rec { min-width: 104px; }
+  .track .clr:hover { border-color: var(--rec); color: var(--rec); }
+  /* the loop's play head, across the whole strip's bottom edge. Bar lines from the
+     background so you see the bar coming; hidden on an empty track. */
+  .pos { flex-basis: 100%; height: 5px; border-radius: 3px; background: #10141b; position: relative;
+         overflow: hidden; display: none; margin-top: -2px; }
+  .track.haspos .pos { display: block; }
+  .pos > b { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line); }
+  .pos > i { position: absolute; top: 0; bottom: 0; left: 0; width: 3px; background: var(--accent); }
+  .pos > u { position: absolute; top: 0; bottom: 0; left: 0; width: 0; background: rgba(77,163,255,.18); }
+  .track.recording .pos > i, .track.recording .pos > u { background: var(--rec); }
+  .track.recording .pos > u { background: rgba(255,77,94,.2); }
+  .track.overdub .pos > i { background: var(--dub); }
+
+  .row { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; align-items: center; }
+  button.act { background: #10141b; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 12px 20px; font-size: 14px; cursor: pointer; }
+  button.act:hover { border-color: #3a4557; }
+  button.act.on { border-color: var(--play); color: var(--play); }
+  button.act.warn { border-color: var(--dub); color: var(--dub); }
+  button.act.small { padding: 6px 14px; font-size: 12px; }
+  button.act:disabled { opacity: .45; cursor: default; }
+  button.danger:hover { border-color: var(--rec); color: var(--rec); }
+
+  /* ---- setup: devices ---- */
+  select, input[type=text], input[type=number] {
+    background: #10141b; border: 1px solid var(--line); border-radius: 7px; color: var(--text);
+    padding: 8px 10px; font: inherit; font-size: 13px; }
+  select:focus, input:focus { outline: none; border-color: var(--accent); }
+  .grid2 { display: grid; grid-template-columns: 150px 1fr; gap: 10px 14px; align-items: center; font-size: 13px; }
+  .grid2 .k { color: var(--dim); }
+  .devlist { max-height: 260px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; margin: 12px 0; }
+  .dev { display: grid; grid-template-columns: 1fr 64px 64px; gap: 10px; padding: 8px 12px; font-size: 13px; cursor: pointer;
+         border-bottom: 1px solid rgba(255,255,255,.04); align-items: center; }
+  .dev:last-child { border-bottom: 0; }
+  .dev:hover { background: #10141b; }
+  .dev .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dev .n small { color: var(--dim); margin-right: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: .05em; }
+  .dev .c { font-variant-numeric: tabular-nums; color: var(--dim); text-align: right; }
+  .dev .c.has { color: var(--text); }
+  .dev.in { box-shadow: inset 3px 0 0 var(--play); }
+  .dev.out { box-shadow: inset -3px 0 0 var(--accent); }
+  .dev.in.out { box-shadow: inset 3px 0 0 var(--play), inset -3px 0 0 var(--accent); }
+  .devhead { display: grid; grid-template-columns: 1fr 64px 64px; gap: 10px; padding: 6px 12px; font-size: 10px;
+             text-transform: uppercase; letter-spacing: .06em; color: var(--dim); border-bottom: 1px solid var(--line); }
+  .devhead span:not(:first-child) { text-align: right; }
+  .running { font-size: 12px; color: var(--dim); margin-top: 10px; line-height: 1.6; }
+  .running b { color: var(--text); font-weight: 600; }
+  .running .warn { color: var(--dub); }
+
+  /* ---- setup: track builder ---- */
+  table.tt { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.tt th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim);
+                font-weight: 600; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+  table.tt td { padding: 6px 8px; border-bottom: 1px solid rgba(255,255,255,.04); vertical-align: middle; }
+  table.tt tr.new td { border-top: 1px solid var(--line); padding-top: 12px; }
+  table.tt input[type=text] { width: 100%; }
+  table.tt .idx { color: var(--dim); font-variant-numeric: tabular-nums; width: 28px; }
+  table.tt .ins { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+  table.tt .ins select { min-width: 84px; }
+  table.tt .meter { width: 80px; }
+  table.tt button { background: #10141b; color: var(--text); border: 1px solid var(--line); border-radius: 7px;
+                    padding: 6px 10px; font-size: 12px; cursor: pointer; }
+  table.tt button.rm:hover { border-color: var(--rec); color: var(--rec); }
+  table.tt button.add { border-color: var(--play); color: var(--play); }
 
   /* ---- settings ---- */
-  .setrow { display: grid; grid-template-columns: 132px 1fr 62px 54px;
-            gap: 10px; align-items: center; padding: 5px 0; }
+  .setrow { display: grid; grid-template-columns: 132px 1fr 62px 54px; gap: 10px; align-items: center; padding: 5px 0; }
   .setrow + .setrow { border-top: 1px solid rgba(255,255,255,.05); }
   .setrow .sk { font-size: 12px; }
   .setrow .sk small { display: block; color: var(--dim); font-size: 10px; line-height: 1.3; }
   .setrow input[type=range] { width: 100%; accent-color: var(--accent); }
   .setrow .sv { font-variant-numeric: tabular-nums; font-size: 12px; text-align: right; }
   .setrow.dirty .sv { color: var(--dub); font-weight: 700; }
-  .setrow .sw { font-size: 9px; text-transform: uppercase; letter-spacing: .04em;
-                text-align: center; color: var(--dim); border: 1px solid var(--idle);
-                border-radius: 4px; padding: 2px 0; }
+  .setrow .sw { font-size: 9px; text-transform: uppercase; letter-spacing: .04em; text-align: center; color: var(--dim);
+                border: 1px solid var(--idle); border-radius: 4px; padding: 2px 0; }
   .setrow .sw.record { color: var(--dub); border-color: var(--dub); }
-  .setbar { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
-  .track.focus::before {
-    content: '▸'; position: absolute; margin-left: -18px; color: var(--accent); font-size: 15px;
-  }
-  .track-id { width: 148px; flex-shrink: 0; cursor: pointer; }
-  /* names are user-chosen and can be long ("drums-bomboclat"); clip rather than let a
-     long one push the transport buttons off the row. Full name is in the title attr. */
-  .track-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .track-in { color: var(--dim); font-size: 12px; }
-  .track-badge { flex-shrink: 0; font-size: 11px; font-weight: 700; letter-spacing: .05em; padding: 4px 9px; border-radius: 5px; text-transform: uppercase; background: var(--idle); color: #04121f; }
-  .fader { flex: 1 1 140px; min-width: 100px; accent-color: var(--accent); }
-  /* drive amount, driven by R2 — read-only, it shows what the trigger is doing */
-  .fxbar { width: 52px; height: 6px; background: #10141b; border-radius: 3px;
-           overflow: hidden; flex-shrink: 0; }
-  .fxbar > i { display: block; height: 100%; width: 0%; background: var(--rec);
-               transition: width .05s linear; }
-  .track.driven { border-color: var(--rec); }
-  .track button { background: #10141b; color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
-  .track button:hover { border-color: #3a4557; }
-  .track .rec { min-width: 104px; }
-  .track .clr:hover { border-color: var(--rec); color: var(--rec); }
+  .setbar { display: flex; align-items: center; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+  /* the Save bar is sticky in Setup, because unsaved changes can be made in three panels */
+  .savebar { position: sticky; bottom: 12px; z-index: 5; background: var(--panel); border: 1px solid var(--line);
+             border-radius: 12px; padding: 12px 18px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+             box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+  .savebar.dirty { border-color: rgba(255,176,32,.5); }
 
-  .row { display: flex; gap: 10px; margin-top: 16px; }
-  button.act { background: #10141b; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 12px 20px; font-size: 14px; cursor: pointer; }
-  button.act:hover { border-color: #3a4557; }
-  button.act.on { border-color: var(--play); color: var(--play); }
-  button.danger:hover { border-color: var(--rec); color: var(--rec); }
-
-  /* sample browser */
-  .browser-top { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
-  .search { flex: 1; background: #10141b; border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 10px 12px; font: inherit; }
-  .search:focus { outline: none; border-color: var(--accent); }
-  .dim { color: var(--dim); font-size: 12px; white-space: nowrap; }
-  .banks { max-height: 340px; overflow-y: auto; display: flex; flex-direction: column; gap: 4px; }
-  .bank { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex-shrink: 0; }
-  .bank-head { display: flex; align-items: center; gap: 10px; padding: 9px 12px; cursor: pointer; }
-  .bank-head:hover { background: #10141b; }
-  .bank-name { font-weight: 600; }
-  .bank-count { color: var(--dim); font-size: 12px; margin-left: auto; }
-  .chips { display: none; flex-wrap: wrap; gap: 6px; padding: 0 12px 12px; }
-  .bank.open .chips { display: flex; }
-  .chip { padding: 5px 9px; background: #10141b; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; font-size: 12px; font-variant-numeric: tabular-nums; }
-  .chip:hover { border-color: var(--accent); color: var(--accent); }
-  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #04121f; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--accent); color: #04121f; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 10; }
   .toast.show { opacity: 1; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <div class="topbar">
-    <span class="conn" id="conn"></span>
+    <span class="conn" id="conn" title="bridge connection"></span>
     <span class="title">LIVE&nbsp;LOOPER</span>
+    <div class="tabs" role="tablist">
+      <button id="tabPerform" class="on" data-view="perform">Perform <span class="kbd">1</span></button>
+      <button id="tabSetup" data-view="setup">Setup <span class="kbd">2</span></button>
+    </div>
     <span class="spacer"></span>
+    <span class="pill off" id="rigPill" title="the SuperCollider server">SC: waiting…</span>
     <span class="metric">cps <b id="cps">–</b></span>
     <span class="metric">tempo <b id="bpm">–</b> bpm</span>
   </div>
 
-  <div class="panel">
-    <div class="label" style="display:flex;align-items:center;justify-content:space-between">
-      <span>Metronome</span>
-      <button class="act" id="clickBtn" style="padding:6px 14px;font-size:12px">Click: —</button>
-    </div>
-    <div class="beats" id="beats"></div>
-    <div class="sweep"><div class="fill" id="fill"></div></div>
+  <div class="banner" id="rigBanner">
+    <span id="rigBannerText"></span>
+    <span class="spacer"></span>
+    <button class="act small" id="rigBannerBtn">Open Setup</button>
   </div>
 
-  <div class="panel">
-    <div class="label">Tracks (click a strip to select it)</div>
-    <div class="tracks" id="tracks"></div>
-  </div>
+  <!-- ================= PERFORM ================= -->
+  <div class="view on" id="viewPerform">
+    <div class="panel">
+      <div class="label row">
+        <span>Metronome</span>
+        <button class="act small" id="clickBtn">Click: —</button>
+      </div>
+      <div class="beats" id="beats"></div>
+      <div class="sweep"><div class="fill" id="fill"></div></div>
+    </div>
 
-  <!-- The two mixer levels are selectable with the stick exactly like a track, so they
-       sit AFTER the tracks: the list runs tracks -> tidal -> click, and the highlight has
-       to travel DOWN the screen in the same order the stick steps through it. Moving
-       these panels means reordering ~navName/~navAdjust in looper.scd to match. -->
-  <div class="panel">
-    <div class="label">Mixer</div>
-    <div class="clickvol mixitem" id="mixTidal">
-      <span class="dim">tidal patterns level</span>
-      <input type="range" id="dirtFader" min="0" max="1" step="0.01" value="1">
-    </div>
-    <div class="clickvol mixitem" id="mixClick">
-      <span class="dim">click level</span>
-      <input type="range" id="clickAmp" min="0" max="1" step="0.01" value="0.5">
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="label" style="display:flex;align-items:center;justify-content:space-between">
-      <span>Settings</span>
-      <span class="dim" id="setHint" style="font-size:11px">session only until saved</span>
-    </div>
-    <div id="settings"></div>
-    <div class="setbar">
-      <button class="act" id="setSave">Save to config.scd</button>
-      <button class="act" id="setReload">Reload from file</button>
-      <span class="dim" style="font-size:11px">
-        <b>now</b> takes effect immediately · <b>beat</b> on the next beat ·
-        <b>record</b> when you next hit record
-      </span>
-    </div>
-  </div>
-
-  <div class="panel">
-    <div class="label">Controller — DualSense</div>
-    <div class="padwrap">
-      <!-- Only the mapped controls are drawn filled; L1/L2/R1/R2 are outlined because
-           they are reserved for effects and do nothing yet. -->
-      <svg width="260" height="150" viewBox="0 0 260 150" role="img"
-           aria-label="DualSense button mapping">
-        <defs>
-          <style>
-            .body { fill: none; stroke: var(--line); stroke-width: 2; }
-            .btn  { fill: var(--accent); }
-            .btn2 { fill: var(--dub); }
-            .off  { fill: none; stroke: var(--idle); stroke-width: 1.5; }
-            .lbl  { fill: var(--dim); font: 9px -apple-system, Segoe UI, sans-serif; }
-            .cap  { fill: #04121f; font: bold 9px -apple-system, Segoe UI, sans-serif;
-                    text-anchor: middle; }
-          </style>
-        </defs>
-        <!-- body -->
-        <path class="body" d="M78 44 h104 a26 26 0 0 1 26 26 v6 c0 30 -12 46 -30 46
-             c-14 0 -18 -12 -26 -12 h-44 c-8 0 -12 12 -26 12 c-18 0 -30 -16 -30 -46 v-6
-             a26 26 0 0 1 26 -26 z"/>
-        <!-- shoulders: reserved for FX -->
-        <rect class="off" x="60"  y="30" width="34" height="11" rx="5"/>
-        <rect class="off" x="166" y="30" width="34" height="11" rx="5"/>
-        <text class="lbl" x="62"  y="26">L1 / L2</text>
-        <text class="lbl" x="168" y="26">R1 / R2</text>
-        <text class="lbl" x="88"  y="18">reserved for FX</text>
-        <!-- d-pad: navigate -->
-        <g transform="translate(74,74)">
-          <rect class="btn2" x="-4"  y="-14" width="8" height="10" rx="2"/>
-          <rect class="btn2" x="-4"  y="4"   width="8" height="10" rx="2"/>
-          <rect class="btn2" x="-14" y="-4"  width="10" height="8" rx="2"/>
-          <rect class="btn2" x="4"   y="-4"  width="10" height="8" rx="2"/>
-        </g>
-        <text class="lbl" x="52" y="102">navigate</text>
-        <!-- face buttons -->
-        <circle class="btn" cx="186" cy="60" r="9"/><text class="cap" x="186" y="63">△</text>
-        <circle class="btn" cx="200" cy="74" r="9"/><text class="cap" x="200" y="77">○</text>
-        <circle class="btn" cx="172" cy="74" r="9"/><text class="cap" x="172" y="77">□</text>
-        <circle class="btn" cx="186" cy="88" r="9"/><text class="cap" x="186" y="91">✕</text>
-        <!-- touchpad -->
-        <rect class="btn2" x="96" y="46" width="68" height="26" rx="4"/>
-        <text class="lbl" x="98" y="42">touchpad — stop/start</text>
-        <!-- sticks -->
-        <circle class="btn2" cx="106" cy="100" r="11"/>
-        <circle class="btn2" cx="154" cy="100" r="11"/>
-        <text class="lbl" x="82"  y="124">select / level</text>
-        <text class="lbl" x="140" y="124">scroll</text>
-        <!-- options -->
-        <circle class="btn" cx="160" cy="52" r="5"/>
-        <text class="lbl" x="150" y="44">OPTIONS</text>
-      </svg>
-      <div class="padkey">
-        <div><b>L stick ↑↓</b><span>select — tracks, then tidal &amp; click levels</span></div>
-        <div><b>L stick ←→</b><span>volume of whatever is selected</span></div>
-        <div><b>R stick ↑↓</b><span>scroll the page</span></div>
-        <div><b><span class="glyph">○</span> Circle</b><span>record</span></div>
-        <div><b><span class="glyph">□</span> Square</b><span>overdub</span></div>
-        <div><b><span class="glyph">△</span> Triangle</b><span>clear</span></div>
-        <div><b><span class="glyph">✕</span> Cross</b><span>pin / unpin — build a multi-track selection</span></div>
-        <div><b>TOUCHPAD</b><span>stop / start the loop, on the next bar</span></div>
-        <div><b>OPTIONS</b><span>click on / off</span></div>
-        <div><b>L1 L2 R1 R2</b><span>reserved for effects</span></div>
+    <div class="panel">
+      <div class="label row">
+        <span>Tracks (click a strip to select it)</span>
+        <span class="dim" id="trackCount"></span>
+      </div>
+      <div class="tracks" id="tracks"></div>
+      <div class="note" id="noTracks" style="display:none">
+        No tracks yet — add some in <b>Setup</b>.
       </div>
     </div>
-    <div class="dim" style="margin-top:12px">
-      Press any button to wake the gamepad. This window must stay <b>visible</b> —
-      browsers throttle a hidden tab and the controller will feel dead.
+
+    <!-- The two mixer levels are selectable with the stick exactly like a track, so they
+         sit AFTER the tracks: the list runs tracks -> tidal -> click, and the highlight has
+         to travel DOWN the screen in the same order the stick steps through it. Moving
+         these panels means reordering ~navName/~navAdjust in looper.scd to match. -->
+    <div class="panel">
+      <div class="label">Mixer</div>
+      <div class="clickvol mixitem" id="mixTidal">
+        <span class="dim">tidal patterns level</span>
+        <input type="range" id="dirtFader" min="0" max="1" step="0.01" value="1">
+      </div>
+      <div class="clickvol mixitem" id="mixClick">
+        <span class="dim">click level</span>
+        <input type="range" id="clickAmp" min="0" max="1" step="0.01" value="0.5">
+      </div>
     </div>
   </div>
 
-  <div class="panel">
-    <div class="label">Sample library</div>
-    <div class="browser-top">
-      <input id="search" class="search" placeholder="filter banks…" autocomplete="off">
-      <button class="act" id="refresh">Refresh</button>
-      <span class="dim" id="bankCount"></span>
+  <!-- ================= SETUP ================= -->
+  <div class="view" id="viewSetup">
+    <div class="panel">
+      <div class="label row">
+        <span>Audio interface</span>
+        <button class="act small" id="scanBtn">Scan devices</button>
+      </div>
+      <div class="dim" id="devHint">Scan to list every device this machine can see, with its input and output counts.</div>
+      <div class="devlist" id="devlist" style="display:none">
+        <div class="devhead"><span>device (click: use for in + out · shift-click: in only · alt-click: out only)</span><span>ins</span><span>outs</span></div>
+        <div id="devrows"></div>
+      </div>
+      <div class="grid2">
+        <span class="k">input device</span>
+        <select id="devIn"><option value="">system default</option></select>
+        <span class="k">output device</span>
+        <select id="devOut"><option value="">system default</option></select>
+        <span class="k">sample rate</span>
+        <select id="devRate">
+          <option value="0">device default</option>
+          <option value="44100">44100</option>
+          <option value="48000">48000</option>
+          <option value="88200">88200</option>
+          <option value="96000">96000</option>
+        </select>
+        <span class="k">input channels</span>
+        <div class="ins"><input type="number" id="devIns" min="1" max="128" style="width:90px">
+          <span class="dim" style="margin-left:8px">jacks the tracks can choose from. More than the device has is safe (silent).</span></div>
+        <span class="k">output channels</span>
+        <div><input type="number" id="devOuts" min="2" max="128" style="width:90px"></div>
+      </div>
+      <div class="row">
+        <button class="act warn" id="applyDev">Apply — restarts the server</button>
+        <span class="dim">A device change is a server restart: SuperDirt, tracks and click are rebuilt (loops are not kept; the layout is). ASIO needs the same device for in and out.</span>
+      </div>
+      <div class="running" id="running"></div>
     </div>
-    <div class="banks" id="banks"></div>
+
+    <div class="panel">
+      <div class="label row">
+        <span>Tracks</span>
+        <span class="dim" id="ttCount"></span>
+      </div>
+      <table class="tt">
+        <thead><tr><th>#</th><th>name</th><th>input</th><th>signal</th><th></th></tr></thead>
+        <tbody id="ttBody"></tbody>
+        <tfoot>
+          <tr class="new">
+            <td class="idx">+</td>
+            <td><input type="text" id="newName" placeholder="name (optional)"></td>
+            <td><div class="ins"><select id="newInL"></select><select id="newInR"><option value="">mono</option></select></div></td>
+            <td><span class="dim">play into the jack: the meter here tells you which one it is</span></td>
+            <td><button class="add" id="addTrack">Add track</button></td>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="note">
+        Re-wiring a track to another jack keeps its loop. Changing it between mono and a stereo pair rebuilds
+        it and clears the loop. Order is strip order — tracks are appended, never inserted, so nothing moves
+        under your fingers.
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="label row">
+        <span>Settings</span>
+        <span class="dim" id="setHint" style="font-size:11px">session only until saved</span>
+      </div>
+      <div id="settings"></div>
+      <div class="note">
+        <b>now</b> takes effect immediately · <b>beat</b> on the next beat · <b>record</b> when you next hit record
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="label">Controller — DualSense</div>
+      <div class="padwrap">
+        <svg width="260" height="150" viewBox="0 0 260 150" role="img" aria-label="DualSense button mapping">
+          <defs>
+            <style>
+              .body { fill: none; stroke: var(--line); stroke-width: 2; }
+              .btn  { fill: var(--accent); }
+              .btn2 { fill: var(--dub); }
+              .off  { fill: none; stroke: var(--idle); stroke-width: 1.5; }
+              .lbl  { fill: var(--dim); font: 9px -apple-system, Segoe UI, sans-serif; }
+              .cap  { fill: #04121f; font: bold 9px -apple-system, Segoe UI, sans-serif; text-anchor: middle; }
+            </style>
+          </defs>
+          <path class="body" d="M78 44 h104 a26 26 0 0 1 26 26 v6 c0 30 -12 46 -30 46
+               c-14 0 -18 -12 -26 -12 h-44 c-8 0 -12 12 -26 12 c-18 0 -30 -16 -30 -46 v-6
+               a26 26 0 0 1 26 -26 z"/>
+          <rect class="off" x="60"  y="30" width="34" height="11" rx="5"/>
+          <rect class="btn" x="166" y="30" width="34" height="11" rx="5"/>
+          <text class="lbl" x="62"  y="26">L1 / L2</text>
+          <text class="lbl" x="168" y="26">R2 drive</text>
+          <g transform="translate(74,74)">
+            <rect class="btn2" x="-4"  y="-14" width="8" height="10" rx="2"/>
+            <rect class="btn2" x="-4"  y="4"   width="8" height="10" rx="2"/>
+            <rect class="btn2" x="-14" y="-4"  width="10" height="8" rx="2"/>
+            <rect class="btn2" x="4"   y="-4"  width="10" height="8" rx="2"/>
+          </g>
+          <text class="lbl" x="52" y="102">navigate</text>
+          <circle class="btn" cx="186" cy="60" r="9"/><text class="cap" x="186" y="63">△</text>
+          <circle class="btn" cx="200" cy="74" r="9"/><text class="cap" x="200" y="77">○</text>
+          <circle class="btn" cx="172" cy="74" r="9"/><text class="cap" x="172" y="77">□</text>
+          <circle class="btn" cx="186" cy="88" r="9"/><text class="cap" x="186" y="91">✕</text>
+          <rect class="btn2" x="96" y="46" width="68" height="26" rx="4"/>
+          <text class="lbl" x="98" y="42">touchpad — stop/start</text>
+          <circle class="btn2" cx="106" cy="100" r="11"/>
+          <circle class="btn2" cx="154" cy="100" r="11"/>
+          <text class="lbl" x="82"  y="124">select / level</text>
+          <text class="lbl" x="140" y="124">scroll</text>
+          <circle class="btn" cx="160" cy="52" r="5"/>
+          <text class="lbl" x="150" y="44">OPTIONS</text>
+        </svg>
+        <div class="padkey">
+          <div><b>L stick ↑↓</b><span>select — tracks, then tidal &amp; click levels</span></div>
+          <div><b>L stick ←→</b><span>volume of whatever is selected</span></div>
+          <div><b>R stick ↑↓</b><span>scroll the page</span></div>
+          <div><b><span class="glyph">○</span> Circle</b><span>record</span></div>
+          <div><b><span class="glyph">□</span> Square</b><span>overdub</span></div>
+          <div><b><span class="glyph">△</span> Triangle</b><span>clear</span></div>
+          <div><b><span class="glyph">✕</span> Cross</b><span>pin / unpin — build a multi-track selection</span></div>
+          <div><b>TOUCHPAD</b><span>stop / start the loop, on the next bar</span></div>
+          <div><b>R2</b><span>drive on the focused track — pressure = amount</span></div>
+          <div><b>OPTIONS</b><span>click on / off</span></div>
+        </div>
+      </div>
+      <div class="note">
+        Press any button to wake the gamepad. This window must stay <b>visible</b> —
+        browsers throttle a hidden tab and the controller will feel dead.
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="label">Keyboard</div>
+      <div class="keys">
+        <div><span class="kbd">↑ ↓</span> select</div>
+        <div><span class="kbd">← →</span> level of the selection</div>
+        <div><span class="kbd">R</span> record the selection</div>
+        <div><span class="kbd">O</span> overdub</div>
+        <div><span class="kbd">C</span> clear</div>
+        <div><span class="kbd">space</span> stop / start on the bar</div>
+        <div><span class="kbd">P</span> pin / unpin</div>
+        <div><span class="kbd">K</span> click on / off</div>
+        <div><span class="kbd">1</span> / <span class="kbd">2</span> Perform / Setup</div>
+      </div>
+      <div class="note">Keys do nothing while a text box or menu has the cursor. The same actions as the pad, on the same selection.</div>
+    </div>
+
+    <div class="savebar" id="savebar">
+      <button class="act" id="setSave">Save to config.scd</button>
+      <button class="act" id="setReload">Reload from file</button>
+      <span class="dim" id="saveHint">in sync with config.scd</span>
+    </div>
   </div>
 </div>
 <div class="toast" id="toast"></div>
@@ -300,45 +446,61 @@ $('dirtFader').oninput = (e) => {
   cmd('/cmd/dirtLevel', [parseFloat(e.target.value)]);
 };
 
+// ---- views ----
+// Perform is the stage screen; Setup is everything you only touch at soundcheck. Kept
+// as two blocks of one page so the SSE stream, the gamepad and the metronome keep
+// running whichever is showing.
+let view = 'perform';
+function showView(v) {
+  view = v;
+  $('viewPerform').classList.toggle('on', v === 'perform');
+  $('viewSetup').classList.toggle('on', v === 'setup');
+  $('tabPerform').classList.toggle('on', v === 'perform');
+  $('tabSetup').classList.toggle('on', v === 'setup');
+  try { localStorage.setItem('ll.view', v); } catch (_) {}
+}
+$('tabPerform').onclick = () => showView('perform');
+$('tabSetup').onclick   = () => showView('setup');
+$('rigBannerBtn').onclick = () => showView('setup');
+try { if (localStorage.getItem('ll.view') === 'setup') showView('setup'); } catch (_) {}
+
 // ---- tracks ----
 let focusIdx = 0;
-// Record is always available — it punches over a playing loop. Only its label changes,
-// so you can see a take is in progress.
+let tracksMeta = [];   // [{name, inputs:[..]}] — what the strips and the builder are made from
 const REC_LABEL = { idle: '● Rec', recording: 'recording…', playing: '● Rec', overdub: '● Rec' };
 const DUB_LABEL = { idle: '＋ Dub', recording: '＋ Dub', playing: '＋ Dub', overdub: '■ Stop dub' };
 const BADGE_TEXT = { stopping: 'STOPPING…', starting: 'STARTING…' };
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // args arrive as [name, input, name, input, ...] — pairs, so a missing value can't
-// shift every following track's label onto the wrong strip.
+// shift every following track's label onto the wrong strip. The input is "5" or "0+1".
 function buildTracks(args) {
-  const c = $('tracks'); c.innerHTML = '';
+  tracksMeta = [];
   for (let i = 0; i + 1 < args.length; i += 2) {
-    const idx  = i / 2;
-    const name = String(args[i]);
-    const inp  = String(args[i + 1]);
+    tracksMeta.push({ name: String(args[i]), inputs: String(args[i + 1]).split('+').map(Number) });
+  }
+  const c = $('tracks'); c.innerHTML = '';
+  tracksMeta.forEach((tm, idx) => {
     const el = document.createElement('div');
     el.className = 'track'; el.dataset.idx = idx;
     el.innerHTML =
-      `<div class="track-id"><div class="track-name" title="${name}">${name}</div>` +
-      `<div class="track-in">in ${inp}</div></div>` +
+      `<div class="track-id"><div class="track-name" title="${esc(tm.name)}">${esc(tm.name)}</div>` +
+      `<div class="track-in">in ${esc(tm.inputs.join('+'))}<span class="meter" title="input level"><i></i></span></div></div>` +
       `<button class="pin" title="pin into the selection">●</button>` +
       `<span class="track-badge">IDLE</span>` +
       `<input type="range" class="fader" min="0" max="1" step="0.01" value="1">` +
       `<div class="bars" title="loop length — click to change">4 bar</div>` +
       `<div class="fxbar" title="drive (R2)"><i></i></div>` +
       `<button class="rec">● Rec</button><button class="dub">＋ Dub</button>` +
-      `<button class="clr">Clear</button>`;
+      `<button class="clr">Clear</button>` +
+      `<div class="pos" title="loop position"><u></u><i></i></div>`;
     // Clicking anywhere on the strip selects it — the controller acts on the selection, so
     // selecting has to be as easy as possible.
     el.onclick = () => cmd('/cmd/focus', [idx]);
     // stopPropagation: the strip itself selects on click, and changing the length
     // shouldn't also move the selection out from under you
-    el.querySelector('.bars').onclick = (e) => {
-      e.stopPropagation(); cmd('/cmd/trackCycles', [idx]);
-    };
-    el.querySelector('.pin').onclick = (e) => {
-      e.stopPropagation(); cmd('/cmd/pinToggle', [idx]);
-    };
+    el.querySelector('.bars').onclick = (e) => { e.stopPropagation(); cmd('/cmd/trackCycles', [idx]); };
+    el.querySelector('.pin').onclick  = (e) => { e.stopPropagation(); cmd('/cmd/pinToggle', [idx]); };
     el.querySelector('.rec').onclick = () => cmd('/cmd/trackRecord', [idx]);
     el.querySelector('.dub').onclick = () => cmd('/cmd/trackOverdub', [idx]);
     el.querySelector('.clr').onclick = () => cmd('/cmd/trackClear', [idx]);
@@ -347,13 +509,19 @@ function buildTracks(args) {
       cmd('/cmd/trackLevel', [idx, parseFloat(e.target.value)]);
     };
     c.appendChild(el);
-  }
+  });
+  $('noTracks').style.display = tracksMeta.length ? 'none' : 'block';
+  $('trackCount').textContent = tracksMeta.length ? `${tracksMeta.length} / ${rig.maxTracks || '?'}` : '';
   setFocus(focusIdx);
-  applyPins(pins);   // the strips were just replaced, so re-paint what was pinned
+  applyPins(pins);       // the strips were just replaced, so re-paint what was pinned
+  applyCycles(cycles);
+  buildBuilder();
 }
+let trackStates = [];
 function updateTracks(states) {
   const c = $('tracks');
   if (c.children.length === 0 && states.length > 0) { cmd('/cmd/getTracks', []); return; }  // self-heal
+  trackStates = states;
   [...c.children].forEach((el, idx) => {
     const st = states[idx] || 'idle';
     const badge = el.querySelector('.track-badge');
@@ -362,12 +530,31 @@ function updateTracks(states) {
     badge.style.background = getComputedStyle(document.documentElement).getPropertyValue(STATE_COLORS[st] || '--idle');
     el.querySelector('.rec').textContent = REC_LABEL[st] || '● Rec';
     el.querySelector('.dub').textContent = DUB_LABEL[st] || '＋ Dub';
+    el.classList.toggle('haspos', st !== 'idle');
+    el.classList.toggle('recording', st === 'recording');
+    el.classList.toggle('overdub', st === 'overdub');
   });
 }
 let pins = [];
 function applyPins(flags) {
   pins = flags.map(Boolean);
   [...$('tracks').children].forEach((el, i) => el.classList.toggle('pinned', !!pins[i]));
+}
+let cycles = [];
+function applyCycles(list) {
+  cycles = list.map(Number);
+  [...$('tracks').children].forEach((el, i) => {
+    const b = el.querySelector('.bars');
+    if (b && cycles[i] !== undefined) b.textContent = cycles[i] + ' bar';
+    // bar lines on the play-head strip: one per bar of this track's length
+    const pos = el.querySelector('.pos');
+    if (pos && cycles[i]) {
+      pos.querySelectorAll('b').forEach(x => x.remove());
+      for (let k = 1; k < cycles[i]; k++) {
+        const m = document.createElement('b'); m.style.left = (k / cycles[i] * 100) + '%'; pos.appendChild(m);
+      }
+    }
+  });
 }
 
 // The selection runs past the tracks onto the two mixer items, so the stick can reach
@@ -382,7 +569,7 @@ function setFocus(idx) {
   // Follow the selection, but only when it actually moved and only as far as it has to:
   // 'nearest' is a no-op while the selected item is already visible, so this never
   // fights the right stick or yanks the page while you are reading something else.
-  if (moved) {
+  if (moved && view === 'perform') {
     const el = focusIdx < n ? $('tracks').children[focusIdx]
              : (focusIdx === n ? $('mixTidal') : $('mixClick'));
     if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -393,7 +580,7 @@ function setFocus(idx) {
 // While you're dragging a slider here, your own move round-trips through SC and comes
 // straight back; without a guard a slow round-trip would yank the handle back to a value
 // you've already moved past. So ignore remote updates for a slider you just touched.
-const lastLocalEdit = {};   // keyed by track index, plus 'click' for the metronome level
+const lastLocalEdit = {};   // keyed by track index, plus 'click' / 'tidal'
 function applyLevels(levels) {
   [...$('tracks').children].forEach((el, idx) => {
     const v = levels[idx];
@@ -404,13 +591,39 @@ function applyLevels(levels) {
   });
 }
 
-// ---- metronome ----
+// ---- meters ----
+// Levels only flow while we keep asking: a heartbeat every 2 s while the tab is visible,
+// and an explicit off when it is hidden, so a dashboard left open in the background
+// costs the rig nothing. SC drops the subscription on its own if we vanish.
+function meterPulse() {
+  if (!connected) return;
+  cmd('/cmd/meters', [document.visibilityState === 'visible' ? 1 : 0]);
+}
+setInterval(meterPulse, 2000);
+document.addEventListener('visibilitychange', meterPulse);
+function applyMeters(args) {
+  // [in, out, in, out, ...] per track, linear amplitude. Shown on a dB-ish curve so quiet
+  // signals still register; full scale = 0 dBFS.
+  const bar = a => Math.min(100, Math.max(0, (20 * Math.log10(a + 1e-5) + 60) / 60 * 100));
+  const strips = [...$('tracks').children], rows = [...$('ttBody').children];
+  for (let i = 0; i * 2 + 1 < args.length; i++) {
+    const inA = +args[i * 2], w = bar(inA), hot = inA > 0.9;
+    const s = strips[i] && strips[i].querySelector('.meter > i');
+    if (s) { s.style.width = w.toFixed(0) + '%'; s.classList.toggle('hot', hot); }
+    const r = rows[i] && rows[i].querySelector('.meter > i');
+    if (r) { r.style.width = w.toFixed(0) + '%'; r.classList.toggle('hot', hot); }
+  }
+}
+
+// ---- metronome + loop heads ----
 // SC sends a clock REFERENCE (cps + the phase at send time) about twice a second; we
 // extrapolate the rest here in requestAnimationFrame. That means the animation is tied
 // to the display's refresh instead of to the arrival of network packets — smoother than
-// the old 30 Hz push, on ~2 messages/second instead of 60.
+// the old 30 Hz push, on ~2 messages/second instead of 60. The whole cycle count rides
+// along, which is all a strip needs to place its loop's play head: buffers are locked to
+// the phrase grid, so a 4-bar loop is at (cycle mod 4) / 4 whenever it was armed.
 let curDiv = 0, lastActive = -1;
-let clock = null;                       // { cps, phase, div, t0 }
+let clock = null;                       // { cps, phase, div, cycle, t0 }
 
 function buildBeats(div) {
   if (div === curDiv) return;
@@ -418,8 +631,8 @@ function buildBeats(div) {
   const el = $('beats'); el.innerHTML = '';
   for (let i = 0; i < div; i++) { const b = document.createElement('div'); b.className = 'beat'; el.appendChild(b); }
 }
-function onClock(cps, phase, div) {
-  clock = { cps, phase, div, t0: performance.now() };
+function onClock(cps, phase, div, cycle) {
+  clock = { cps, phase, div, cycle: (cycle === undefined ? phase : cycle), t0: performance.now() };
   buildBeats(div);
   $('cps').textContent = cps.toFixed(2);
   $('bpm').textContent = Math.round(cps * div * 60);
@@ -436,17 +649,53 @@ function renderMetro(phase, div) {
   }
   $('fill').style.width = (phase * 100).toFixed(1) + '%';
 }
+function renderHeads(cycle) {
+  const strips = $('tracks').children;
+  for (let i = 0; i < strips.length; i++) {
+    if (!strips[i].classList.contains('haspos')) continue;
+    const c = cycles[i] || 4;
+    let p = (cycle % c) / c; if (p < 0) p += 1;
+    const pos = strips[i].querySelector('.pos');
+    pos.querySelector('i').style.left = (p * 100).toFixed(2) + '%';
+    pos.querySelector('u').style.width = (p * 100).toFixed(2) + '%';
+  }
+}
 function frame() {
-  if (clock) {
+  if (clock && view === 'perform') {
     const elapsed = (performance.now() - clock.t0) / 1000;
-    let p = (clock.phase + (elapsed * clock.cps)) % 1;
-    if (p < 0) p += 1;
+    const cycle = clock.cycle + elapsed * clock.cps;
+    let p = cycle % 1; if (p < 0) p += 1;
     renderMetro(p, clock.div);
+    renderHeads(cycle);
   }
   pollGamepad();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// ---- keyboard ----
+// The pad's actions on the pad's selection. Nothing fires while a text box or a menu has
+// the cursor, so typing a track name can never clear a track.
+document.addEventListener('keydown', (e) => {
+  const tag = (e.target.tagName || '').toLowerCase();
+  if (tag === 'input' || tag === 'select' || tag === 'textarea' || e.metaKey || e.ctrlKey || e.altKey) return;
+  const k = e.key;
+  let handled = true;
+  if (k === 'ArrowUp')         cmd('/cmd/navMove', [-1]);
+  else if (k === 'ArrowDown')  cmd('/cmd/navMove', [1]);
+  else if (k === 'ArrowLeft')  cmd('/cmd/navAdjust', [e.shiftKey ? -0.01 : -0.05]);
+  else if (k === 'ArrowRight') cmd('/cmd/navAdjust', [e.shiftKey ? 0.01 : 0.05]);
+  else if (k === 'r' || k === 'R') cmd('/cmd/selRecord', []);
+  else if (k === 'o' || k === 'O') cmd('/cmd/selOverdub', []);
+  else if (k === 'c' || k === 'C') cmd('/cmd/selClear', []);
+  else if (k === ' ')          cmd('/cmd/selLoopToggle', []);
+  else if (k === 'p' || k === 'P') cmd('/cmd/pinToggle', []);
+  else if (k === 'k' || k === 'K') cmd('/cmd/clickToggle', []);
+  else if (k === '1')          showView('perform');
+  else if (k === '2')          showView('setup');
+  else handled = false;
+  if (handled) e.preventDefault();
+});
 
 // ---- DualSense ----
 // SuperCollider cannot read this controller: Windows reserves HID top-level collections
@@ -458,7 +707,6 @@ requestAnimationFrame(frame);
 // will feel dead. Unfocused but visible is fine.
 //
 // Indices are the W3C "standard gamepad" mapping, which Chrome/Edge apply to a DualSense.
-// L1/L2/R1/R2 (4,5,6,7) are deliberately UNMAPPED — reserved for effects.
 const PAD = {
   record:  1,    // Circle
   overdub: 2,    // Square
@@ -528,8 +776,8 @@ function pollGamepad() {
   }
 
   // Right stick scrolls. The page is taller than a screen once you have seven tracks
-  // plus the legend and the sample browser, and reaching for the mouse mid-set is the
-  // thing the controller exists to avoid. Purely local — no OSC, so holding it is free.
+  // plus the legend, and reaching for the mouse mid-set is the thing the controller
+  // exists to avoid. Purely local — no OSC, so holding it is free.
   const ry = gp.axes[AXIS_RY] || 0;
   if (Math.abs(ry) > AXIS_OFF) {
     window.scrollBy(0, Math.sign(ry) * (Math.abs(ry) - AXIS_OFF) / (1 - AXIS_OFF) * SCROLL_RATE);
@@ -565,57 +813,197 @@ function pollGamepad() {
   if (step !== lastDrive) { lastDrive = step; cmd('/cmd/trackFx', [focusIdx, step / DRIVE_STEPS]); }
 }
 
-// ---- sample browser ----
-let banks = [];
-let openBank = null;
-const banksEl = $('banks'), searchEl = $('search');
-
-function renderBanks() {
-  const q = searchEl.value.trim().toLowerCase();
-  const list = q ? banks.filter(b => b.name.toLowerCase().includes(q)) : banks;
-  $('bankCount').textContent = banks.length ? `${list.length} / ${banks.length}` : '';
-  banksEl.innerHTML = '';
-  if (list.length === 0) {
-    banksEl.innerHTML = `<div class="dim" style="padding:6px 2px">${banks.length ? 'no banks match' : 'waiting for SuperCollider…'}</div>`;
-    return;
-  }
-  for (const b of list) {
-    const wrap = document.createElement('div');
-    wrap.className = 'bank' + (openBank === b.name ? ' open' : '');
-    const head = document.createElement('div');
-    head.className = 'bank-head';
-    head.innerHTML = `<span class="bank-name">${b.name}</span><span class="bank-count">${b.count}</span>`;
-    head.onclick = () => { openBank = (openBank === b.name ? null : b.name); renderBanks(); };
-    wrap.appendChild(head);
-    const chips = document.createElement('div');
-    chips.className = 'chips';
-    if (openBank === b.name) {
-      for (let i = 0; i < b.count; i++) {
-        const c = document.createElement('div');
-        c.className = 'chip'; c.textContent = ':' + i;
-        c.onclick = (e) => { e.stopPropagation(); preview(b.name, i); };
-        chips.appendChild(c);
-      }
-    }
-    wrap.appendChild(chips);
-    banksEl.appendChild(wrap);
-  }
-}
-function preview(name, idx) {
-  cmd('/cmd/preview', [name, idx]);
-  const text = `${name}:${idx}`;
-  if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
-  toast(`▶ ${text}  (copied)`);
-}
 let toastTimer;
-function toast(msg) {
+function toast(msg, ms = 1400) {
   const t = $('toast'); t.textContent = msg; t.classList.add('show');
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), 1200);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
 }
-searchEl.oninput = renderBanks;
-function requestBanks() { cmd('/cmd/getBanks', []); }
-$('refresh').onclick = requestBanks;
-renderBanks();   // initial paint (shows the waiting hint until banks arrive)
+
+// ---- rig: boot state + devices ----
+// SC owns all of it. The page only mirrors ~bootState and the configured/running device
+// pair, and sends back what you picked; the reboot itself is SC's.
+let rig = { state: 'off', msg: '', inDev: '', outDev: '', rate: 0, ins: 0, outs: 0, maxTracks: 0,
+            runIn: '', runOut: '', runRate: 0, scanning: 0 };
+let devices = [];
+let devTouched = false;    // once you have edited the device form, /rig stops overwriting it
+function applyRig(args) {
+  const [state, msg, inDev, outDev, rate, ins, outs, maxTracks, runIn, runOut, runRate, scanning] = args;
+  const wasIns = rig.ins;
+  rig = { state, msg, inDev, outDev, rate: +rate, ins: +ins, outs: +outs, maxTracks: +maxTracks,
+          runIn, runOut, runRate: +runRate, scanning: +scanning };
+  const pill = $('rigPill');
+  pill.className = 'pill ' + state;
+  pill.textContent = { ready: 'SC: ready', booting: 'SC: ' + (msg || 'booting…'), failed: 'SC: ' + (msg || 'failed'),
+                       off: 'SC: ' + (msg || 'server off') }[state] || 'SC: ' + state;
+  pill.title = msg || state;
+  const banner = $('rigBanner');
+  banner.className = 'banner' + (state === 'ready' ? '' : ' show') + (state === 'booting' ? ' booting' : '');
+  $('rigBannerText').innerHTML = state === 'booting'
+    ? `<b>Restarting the server</b> — ${esc(msg || '')}. Tracks come back when it is up.`
+    : `<b>The server is not running</b>${msg ? ' — ' + esc(msg) : ''}. Pick a device in Setup, or check the SuperCollider post window.`;
+  $('rigBannerBtn').style.display = state === 'booting' ? 'none' : '';
+  $('trackCount').textContent = tracksMeta.length ? `${tracksMeta.length} / ${rig.maxTracks || '?'}` : '';
+  $('scanBtn').disabled = !!rig.scanning;
+  $('scanBtn').textContent = rig.scanning ? 'Scanning…' : 'Scan devices';
+  $('applyDev').disabled = state === 'booting';
+  if (!devTouched) fillDeviceForm();
+  const same = rig.inDev === rig.runIn && rig.outDev === rig.runOut;
+  $('running').innerHTML =
+    `running on <b>${esc(rig.runIn || 'system default')}</b>` +
+    (rig.runOut !== rig.runIn ? ` → <b>${esc(rig.runOut || 'system default')}</b>` : '') +
+    (rig.runRate ? ` @ <b>${rig.runRate} Hz</b>` : '') +
+    (state === 'ready' ? '' : ` <span class="warn">(${esc(state)})</span>`) +
+    (same ? '' : `<br>config says <b>${esc(rig.inDev || 'system default')}</b>` +
+      (rig.outDev !== rig.inDev ? ` → <b>${esc(rig.outDev || 'system default')}</b>` : '') +
+      ` <span class="warn">— not what is running. Apply to switch.</span>`);
+  if (wasIns !== rig.ins) buildBuilder();   // the input menus depend on how many there are
+}
+function fillDeviceForm() {
+  setSelectValue($('devIn'), rig.inDev);
+  setSelectValue($('devOut'), rig.outDev);
+  $('devRate').value = String([44100, 48000, 88200, 96000].includes(rig.rate) ? rig.rate : 0);
+  $('devIns').value = rig.ins || '';
+  $('devOuts').value = rig.outs || '';
+}
+// a device that is configured but not (yet) scanned still needs to show in the menu
+function setSelectValue(sel, value) {
+  if (![...sel.options].some(o => o.value === value)) {
+    const o = document.createElement('option'); o.value = value; o.textContent = value + '  (not seen by the scan)'; sel.appendChild(o);
+  }
+  sel.value = value;
+}
+function renderDevices() {
+  const list = $('devlist'), rows = $('devrows');
+  list.style.display = devices.length ? 'block' : 'none';
+  $('devHint').textContent = devices.length
+    ? `${devices.length} devices. ASIO drivers carry both directions; the other Windows driver classes list inputs and outputs separately.`
+    : 'Scan to list every device this machine can see, with its input and output counts.';
+  rows.innerHTML = '';
+  const inSel = $('devIn'), outSel = $('devOut');
+  const keepIn = inSel.value, keepOut = outSel.value;
+  inSel.innerHTML = '<option value="">system default</option>';
+  outSel.innerHTML = '<option value="">system default</option>';
+  for (const d of devices) {
+    const api = d.name.split(':')[0].trim();
+    const row = document.createElement('div');
+    row.className = 'dev';
+    row.innerHTML = `<span class="n" title="${esc(d.name)}"><small>${esc(api)}</small>${esc(d.name.slice(api.length + 1).replace(/^:\s*/, ''))}</span>` +
+      `<span class="c ${d.ins ? 'has' : ''}">${d.ins}</span><span class="c ${d.outs ? 'has' : ''}">${d.outs}</span>`;
+    row.onclick = (e) => {
+      devTouched = true;
+      const useIn = d.ins > 0 && !e.altKey, useOut = d.outs > 0 && !e.shiftKey;
+      if (useIn)  { setSelectValue(inSel, d.name);  $('devIns').value = d.ins; }
+      if (useOut) { setSelectValue(outSel, d.name); $('devOuts').value = Math.max(2, d.outs); }
+      if (!useIn && !useOut) toast('that device has no channels in that direction');
+      markDevRows();
+    };
+    rows.appendChild(row);
+    if (d.ins > 0)  { const o = document.createElement('option'); o.value = d.name; o.textContent = `${d.name}  (${d.ins} in)`; inSel.appendChild(o); }
+    if (d.outs > 0) { const o = document.createElement('option'); o.value = d.name; o.textContent = `${d.name}  (${d.outs} out)`; outSel.appendChild(o); }
+  }
+  setSelectValue(inSel, keepIn); setSelectValue(outSel, keepOut);
+  markDevRows();
+}
+function markDevRows() {
+  const inName = $('devIn').value, outName = $('devOut').value;
+  [...$('devrows').children].forEach((row, i) => {
+    row.classList.toggle('in',  devices[i].name === inName);
+    row.classList.toggle('out', devices[i].name === outName);
+  });
+}
+$('devIn').onchange = () => {
+  devTouched = true;
+  const d = devices.find(x => x.name === $('devIn').value);
+  if (d) $('devIns').value = d.ins;
+  markDevRows();
+};
+$('devOut').onchange = () => {
+  devTouched = true;
+  const d = devices.find(x => x.name === $('devOut').value);
+  if (d) $('devOuts').value = Math.max(2, d.outs);
+  markDevRows();
+};
+['devRate', 'devIns', 'devOuts'].forEach(id => $(id).oninput = () => { devTouched = true; });
+$('scanBtn').onclick = () => { cmd('/cmd/scanDevices', []); $('scanBtn').disabled = true; $('scanBtn').textContent = 'Scanning…'; };
+$('applyDev').onclick = () => {
+  const busy = trackStates.some(s => s && s !== 'idle');
+  if (busy && !confirm('Tracks are playing or recording. Switching the device restarts the server and loses every loop (the layout is kept). Continue?')) return;
+  const inDev = $('devIn').value, outDev = $('devOut').value;
+  const ins = parseInt($('devIns').value, 10) || 0, outs = parseInt($('devOuts').value, 10) || 0;
+  cmd('/cmd/useDevice', [inDev, outDev, parseInt($('devRate').value, 10) || 0, ins, outs]);
+  devTouched = false;
+  toast('switching device…', 2500);
+};
+
+// ---- track builder ----
+// One row per track, editable in place. Changing the input menu re-wires the track at
+// once (its loop survives a same-width change); the name is sent on Enter or blur.
+function inputOptions(sel, current, allowNone) {
+  sel.innerHTML = allowNone ? '<option value="">mono</option>' : '';
+  for (let i = 0; i < (rig.ins || 0); i++) {
+    const o = document.createElement('option'); o.value = String(i); o.textContent = 'in ' + i; sel.appendChild(o);
+  }
+  if (current !== undefined && current !== null && current !== '') {
+    // a layout saved for a bigger interface: the jack does not exist on this one. Show
+    // it as what it is rather than a blank menu, so re-wiring is an obvious next step.
+    if (+current >= (rig.ins || 0)) {
+      const o = document.createElement('option'); o.value = String(current);
+      o.textContent = `in ${current} — not on this device`; sel.appendChild(o);
+    }
+    sel.value = String(current);
+  }
+}
+function buildBuilder() {
+  const body = $('ttBody'); body.innerHTML = '';
+  tracksMeta.forEach((tm, idx) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="idx">${idx}</td>` +
+      `<td><input type="text" value="${esc(tm.name)}"></td>` +
+      `<td><div class="ins"><select class="l"></select><select class="r"></select></div></td>` +
+      `<td><span class="meter" title="input level"><i></i></span></td>` +
+      `<td><button class="rm" title="remove this track">Remove</button></td>`;
+    const name = tr.querySelector('input');
+    const send = () => { if (name.value.trim() !== tm.name) cmd('/cmd/renameTrack', [idx, name.value.trim()]); };
+    name.onblur = send;
+    name.onkeydown = (e) => { if (e.key === 'Enter') { send(); name.blur(); } if (e.key === 'Escape') { name.value = tm.name; name.blur(); } };
+    const l = tr.querySelector('.l'), r = tr.querySelector('.r');
+    inputOptions(l, tm.inputs[0], false);
+    inputOptions(r, tm.inputs.length > 1 ? tm.inputs[1] : '', true);
+    const rewire = () => {
+      const a = parseInt(l.value, 10), b = r.value === '' ? null : parseInt(r.value, 10);
+      const widthChange = (b === null) !== (tm.inputs.length === 1);
+      if (widthChange && (trackStates[idx] || 'idle') !== 'idle'
+          && !confirm('Changing between mono and stereo rebuilds the track and clears its loop. Continue?')) {
+        inputOptions(l, tm.inputs[0], false); inputOptions(r, tm.inputs.length > 1 ? tm.inputs[1] : '', true); return;
+      }
+      cmd('/cmd/setTrackInput', b === null ? [idx, a] : [idx, a, b]);
+    };
+    l.onchange = rewire; r.onchange = rewire;
+    tr.querySelector('.rm').onclick = () => {
+      if ((trackStates[idx] || 'idle') !== 'idle' && !confirm(`Remove "${tm.name}"? Its loop is playing and will be lost.`)) return;
+      cmd('/cmd/removeTrack', [idx]);
+    };
+    body.appendChild(tr);
+  });
+  $('ttCount').textContent = `${tracksMeta.length} of ${rig.maxTracks || '?'} (~maxTracks in config.scd)`;
+  const full = rig.maxTracks && tracksMeta.length >= rig.maxTracks;
+  $('addTrack').disabled = !!full || !rig.ins;
+  $('addTrack').textContent = full ? 'At the limit' : 'Add track';
+  // next free jack as the default for a new track — a small thing, but it is what you want
+  const used = new Set(tracksMeta.flatMap(t => t.inputs));
+  let free = 0; while (used.has(free) && free < rig.ins) free++;
+  inputOptions($('newInL'), Math.min(free, Math.max(0, rig.ins - 1)), false);
+  inputOptions($('newInR'), '', true);
+}
+$('addTrack').onclick = () => {
+  const a = parseInt($('newInL').value, 10), b = $('newInR').value === '' ? null : parseInt($('newInR').value, 10);
+  const name = $('newName').value.trim();
+  const args = b === null ? [a] : [a, b];
+  if (name) args.push(name);
+  cmd('/cmd/addTrack', args);
+  $('newName').value = '';
+};
+$('newName').onkeydown = (e) => { if (e.key === 'Enter') $('addTrack').click(); };
 
 // ---- settings ----
 // SC owns both the spec and the values. The browser holds no defaults of its own: a
@@ -635,7 +1023,7 @@ function buildSettings(args) {
     const row = document.createElement('div');
     row.className = 'setrow'; row.dataset.key = sp.key;
     row.innerHTML =
-      `<div class="sk">${sp.label}<small>${sp.note}</small></div>` +
+      `<div class="sk">${esc(sp.label)}<small>${esc(sp.note)}</small></div>` +
       `<input type="range" min="${sp.min}" max="${sp.max}" step="${sp.step}">` +
       `<div class="sv">–</div>` +
       `<div class="sw ${sp.when}">${sp.when}</div>`;
@@ -654,9 +1042,11 @@ function fmtSet(v, step) {
   const places = Math.ceil(-Math.log10(step));
   return v.toFixed(places).replace(/0+$/, '').replace(/\.$/, '') || '0';
 }
+// [layoutDirtyCount, key, value, dirty, key, value, dirty, ...]
 function applySettings(args) {
-  let dirty = 0;
-  for (let i = 0; i + 2 < args.length; i += 3) {
+  let dirty = +args[0] || 0;       // device + track layout keys with no slider
+  const layoutDirty = dirty;
+  for (let i = 1; i + 2 < args.length; i += 3) {
     const key = String(args[i]), v = +args[i + 1], isDirty = !!+args[i + 2];
     const row = document.querySelector(`.setrow[data-key="${key}"]`);
     if (!row) continue;
@@ -672,81 +1062,71 @@ function applySettings(args) {
   const save = $('setSave');
   save.textContent = dirty ? `Save ${dirty} to config.scd` : 'Save to config.scd';
   save.classList.toggle('on', dirty > 0);
-  $('setHint').textContent = dirty
-    ? `${dirty} unsaved — restarting would lose ${dirty === 1 ? 'it' : 'them'}`
+  $('savebar').classList.toggle('dirty', dirty > 0);
+  $('setHint').textContent = dirty - layoutDirty ? `${dirty - layoutDirty} unsaved` : 'in sync with config.scd';
+  $('saveHint').textContent = dirty
+    ? `${dirty} unsaved${layoutDirty ? ` (${layoutDirty} device/track)` : ''} — restarting SuperCollider would lose ${dirty === 1 ? 'it' : 'them'}`
     : 'in sync with config.scd';
+  $('tabSetup').classList.toggle('warn', dirty > 0);
 }
 $('setSave').onclick   = () => cmd('/cmd/saveConfig', []);
-$('setReload').onclick = () => cmd('/cmd/reloadConfig', []);
-
-// ---- incoming state stream ----
-const es = new EventSource('/events');
-es.onopen  = () => { $('conn').classList.add('on'); requestBanks(); cmd('/cmd/getTracks', []); };
-es.onerror = () => $('conn').classList.remove('on');
-es.onmessage = (e) => {
-  let m; try { m = JSON.parse(e.data); } catch (_) { return; }
-  if (m.address === '/clock') {
-    const [cps, phase, div] = m.args;
-    onClock(cps, phase, div);
-  } else if (m.address === '/pins') {
-    applyPins(m.args);
-  } else if (m.address === '/configSpec') {
-    buildSettings(m.args);
-  } else if (m.address === '/config') {
-    applySettings(m.args);
-  } else if (m.address === '/configSaved') {
-    const n = +m.args[0];
-    toast(n < 0 ? 'save failed — see the SC post window'
-                : `saved ${n} values to config.scd`);
-  } else if (m.address === '/cycles') {
-    [...$('tracks').children].forEach((el, i) => {
-      const b = el.querySelector('.bars');
-      if (b && m.args[i] !== undefined) b.textContent = m.args[i] + ' bar';
-    });
-  } else if (m.address === '/state') {
-    // [focus, clickOn, clickAmp, dirtLevel, ...trackStates]
-    const [focus, clickOn, clickAmp, dirtLevel] = m.args;
-    setFocus(focus);
-    updateTracks(m.args.slice(4));
-    if (performance.now() - (lastLocalEdit['tidal'] || 0) > 400) {
-      const df = $('dirtFader');
-      if (Math.abs(parseFloat(df.value) - dirtLevel) > 0.001) df.value = dirtLevel;
-    }
-    const cb = $('clickBtn');
-    cb.textContent = 'Click: ' + (clickOn ? 'on' : 'off');
-    cb.classList.toggle('on', !!clickOn);
-    // don't fight the hand — same guard as the track faders
-    if (performance.now() - (lastLocalEdit['click'] || 0) > 400) {
-      const ca = $('clickAmp');
-      if (Math.abs(parseFloat(ca.value) - clickAmp) > 0.001) ca.value = clickAmp;
-    }
-  } else if (m.address === '/levels') {
-    applyLevels(m.args);
-  } else if (m.address === '/fx') {
-    [...$('tracks').children].forEach((el, i) => {
-      const v = m.args[i] || 0;
-      const bar = el.querySelector('.fxbar > i');
-      if (bar) bar.style.width = (v * 100).toFixed(0) + '%';
-      el.classList.toggle('driven', v > 0.02);
-    });
-  } else if (m.address === '/tracksInit') {
-    buildTracks(m.args.slice(1));          // args[0] = count, rest = input channels
-  } else if (m.address === '/banksClear') {
-    banks = [];
-  } else if (m.address === '/banksAdd') {
-    for (let i = 0; i + 1 < m.args.length; i += 2) banks.push({ name: String(m.args[i]), count: Number(m.args[i + 1]) });
-  } else if (m.address === '/banksDone') {
-    banks.sort((a, b) => a.name.localeCompare(b.name));
-    banksLoaded = true;
-    renderBanks();                 // render ONCE, after all chunks arrive
-  }
+$('setReload').onclick = () => {
+  if (!confirm('Reload config.scd? Unsaved settings are lost, and if the file\'s track layout differs the tracks are rebuilt (loops cleared).')) return;
+  devTouched = false;
+  cmd('/cmd/reloadConfig', []);
 };
 
-// samples may still be loading in SC on first connect — ask until the list is done
-let banksLoaded = false, bankTries = 0;
-const bankPoll = setInterval(() => {
-  if (banksLoaded || ++bankTries > 10) clearInterval(bankPoll); else requestBanks();
-}, 700);
+// ---- incoming state stream ----
+let connected = false;
+const es = new EventSource('/events');
+es.onopen  = () => { connected = true; $('conn').classList.add('on'); cmd('/cmd/getTracks', []); meterPulse(); };
+es.onerror = () => { connected = false; $('conn').classList.remove('on'); };
+es.onmessage = (e) => {
+  let m; try { m = JSON.parse(e.data); } catch (_) { return; }
+  const a = m.args;
+  switch (m.address) {
+    case '/clock':       onClock(a[0], a[1], a[2], a[3]); break;
+    case '/meters':      applyMeters(a); break;
+    case '/pins':        applyPins(a); break;
+    case '/configSpec':  buildSettings(a); break;
+    case '/config':      applySettings(a); break;
+    case '/configSaved': { const n = +a[0]; toast(n < 0 ? 'save failed — see the SC post window' : `saved ${n} values to config.scd`, 2000); break; }
+    case '/cycles':      applyCycles(a); break;
+    case '/rig':         applyRig(a); break;
+    case '/devicesClear': devices = []; break;
+    case '/devicesAdd':  for (let i = 0; i + 2 < a.length; i += 3) devices.push({ name: String(a[i]), ins: +a[i + 1], outs: +a[i + 2] }); break;
+    case '/devicesDone': renderDevices(); break;
+    case '/state': {
+      // [focus, clickOn, clickAmp, dirtLevel, ...trackStates]
+      const [focus, clickOn, clickAmp, dirtLevel] = a;
+      setFocus(focus);
+      updateTracks(a.slice(4));
+      if (performance.now() - (lastLocalEdit['tidal'] || 0) > 400) {
+        const df = $('dirtFader');
+        if (Math.abs(parseFloat(df.value) - dirtLevel) > 0.001) df.value = dirtLevel;
+      }
+      const cb = $('clickBtn');
+      cb.textContent = 'Click: ' + (clickOn ? 'on' : 'off');
+      cb.classList.toggle('on', !!clickOn);
+      // don't fight the hand — same guard as the track faders
+      if (performance.now() - (lastLocalEdit['click'] || 0) > 400) {
+        const ca = $('clickAmp');
+        if (Math.abs(parseFloat(ca.value) - clickAmp) > 0.001) ca.value = clickAmp;
+      }
+      break;
+    }
+    case '/levels':      applyLevels(a); break;
+    case '/fx':
+      [...$('tracks').children].forEach((el, i) => {
+        const v = a[i] || 0;
+        const bar = el.querySelector('.fxbar > i');
+        if (bar) bar.style.width = (v * 100).toFixed(0) + '%';
+        el.classList.toggle('driven', v > 0.02);
+      });
+      break;
+    case '/tracksInit':  buildTracks(a.slice(1)); break;   // args[0] = count, rest = pairs
+  }
+};
 </script>
 </body>
 </html>

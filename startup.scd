@@ -13,8 +13,6 @@
 // ============================================================
 
 (
-var bootAll;
-
 // Project folder, derived from this file's own location, so the folder can be moved or
 // cloned anywhere. Works both when evaluated in the IDE and when .load'ed.
 ~projectDir = thisProcess.nowExecutingPath !? { |p| p.dirname ++ "/" };
@@ -26,15 +24,11 @@ var bootAll;
 
 (~projectDir ++ "config.scd").load;
 
-s.options.device               = ~audioDevice;
-s.options.sampleRate           = ~sampleRate;
-s.options.numInputBusChannels  = ~numInputs;
-s.options.numOutputBusChannels = ~numOutputs;
-s.options.numBuffers           = ~numBuffers;
-s.options.memSize              = ~memSize;
-
-
-bootAll = {
+// Everything the server depends on. An environment variable rather than a local, so
+// the dashboard can run it again after moving the rig to another audio interface
+// (~rebootRig in devices.scd): the first boot of the day and a device switch are then
+// the same code path, and there is only one to get right.
+~bootAll = {
     var t0;
 
     // Dirt-Samples sits next to the SuperDirt quark.
@@ -53,7 +47,6 @@ bootAll = {
                 ("~loadBanks: no such bank in Dirt-Samples: " ++ b).warn;
             };
         };
-        ~sendBanks !? { ~sendBanks.() };          // refresh the dashboard browser
     };
 
     // Load the configured library + anything in samples/.
@@ -73,6 +66,7 @@ bootAll = {
     // reboots the server from an OSC thread and throws "yield called outside Routine"
     // on this machine. Do not use it.
     if (~dirt.isNil) {
+        ~setBootState !? { ~setBootState.(\booting, "loading samples...") };
         ~dirtBus = Bus.audio(s, 2);
         ~dirt    = SuperDirt(2, s);
         // Custom banks: each subfolder of samples/ becomes a sound name. Same-named
@@ -118,14 +112,22 @@ bootAll = {
 
     // A server quit/reboot invalidates every buffer, bus and orbit SuperDirt owns, so
     // forget them and let the next evaluation build fresh ones.
+    //
+    // FREE it, do not just drop it. SuperDirt's OSC receivers are .fix'ed and live in
+    // sclang, so they outlive the server: left in place, the old /dirt/play responder
+    // would keep firing into orbits whose groups no longer exist, alongside the new
+    // instance's — every Tidal event handled twice, one of them failing. free() closes
+    // the network connection and unhooks the orbits from ServerTree.
     ~forgetDirt !? { ServerQuit.remove(~forgetDirt, s) };
-    ~forgetDirt = { ~dirt = nil; ~dirtFader = nil; ~dirtBus = nil };
+    ~forgetDirt = {
+        ~dirt !? { |d| try { d.free } { |e| ("~forgetDirt: " ++ e.errorString).warn } };
+        ~dirt = nil; ~dirtFader = nil; ~dirtBus = nil;
+    };
     ServerQuit.add(~forgetDirt, s);
 
     // Re-scan without restarting anything — use after adding a bank to samples/.
     ~reloadSamples = {
         ~loadAllSamples.value;
-        ~sendBanks !? { ~sendBanks.() };             // refresh the dashboard browser
         "samples reloaded.".postln;
     };
 
@@ -135,53 +137,28 @@ bootAll = {
 
     (~projectDir ++ "looper.scd").load;
     (~projectDir ++ "click.scd").load;
-    (~projectDir ++ "settings.scd").load;
-    (~projectDir ++ "dashboard.scd").load;
 
     "".postln;
     "=== LIVE LOOPER READY ===".postln;
     ("    project: " ++ ~projectDir).postln;
-    ("    device:  " ++ (~audioDevice ? "system default")).postln;
+    ("    device:  " ++ (~audioDevice ? ~inDevice ? "system default")
+        ++ (if (~audioDevice.isNil and: { ~outDevice.notNil }) { " / " ++ ~outDevice } { "" })).postln;
     "    next: VS Code -> Tidal: Boot".postln;
 };
 
+// These need no server, so they load BEFORE the boot. That is what lets a rig whose
+// configured interface is unplugged still show up on the dashboard, list what IS
+// present, and be moved onto it — instead of a dead page and a post-window error.
+(~projectDir ++ "devices.scd").load;
+(~projectDir ++ "settings.scd").load;
+(~projectDir ++ "dashboard.scd").load;
 
 // A wrong device name makes scsynth fail to start, and waitForBoot would then simply
-// never fire — a silent hang right when you need it least. Say what's wrong instead.
-// Is the configured device absent? nil (system default) is always fine.
-//
-// NOTE: `.any { |d| d == name }`, NOT `.includes(name)`. ArrayedCollection's
-// includes/indexOf compare by IDENTITY, so they never match a String however identical
-// its contents — Symbols, Floats and Integers are immediate values and do match, which
-// is what makes the trap so easy to miss. This check used to reject the correct,
-// present device and refuse to boot.
-~deviceMissing = { |name|
-    name.notNil and: { ServerOptions.devices.any { |d| d == name }.not }
-};
-
-if (~deviceMissing.(~audioDevice)) {
-    var all, api, same, cap = 24;
-    // Windows enumerates 200+ MME/DirectSound/WDM-KS endpoints, and dumping them all
-    // buries the actual error off the top of the post window. Narrow to the driver
-    // class that was actually asked for ("ASIO : ..." -> the ASIO devices).
-    all  = ServerOptions.devices;
-    api  = ~audioDevice.asString.split($:).first.stripWhiteSpace;
-    same = all.select { |d| d.asString.beginsWith(api) };
-    if (same.isEmpty) { same = all };
-
-    "".postln;
-    ("*** Audio device not found: " ++ ~audioDevice.asCompileString).postln;
-    ("*** " ++ same.size ++ " device(s) under " ++ api.asCompileString
-        ++ ", of " ++ all.size ++ " endpoints total:").postln;
-    same.keep(cap).do { |d| ("      " ++ d.asCompileString).postln };
-    if (same.size > cap) { ("      ... and " ++ (same.size - cap) ++ " more").postln };
-    "***   Yours missing? The interface is unplugged or its driver isn't loaded.".postln;
-    "*** Full list:  ServerOptions.devices.do(_.postln);".postln;
-    "*** Then set ~audioDevice in config.scd (nil = system default) and evaluate again.".postln;
-    "".postln;
-} {
-    s.waitForBoot(bootAll);
-};
+// never fire — a silent hang right when you need it least. ~bootRig checks first and
+// says what is wrong instead.
+// (~autoBoot = false lets test/devices-test.scd load this file for ~bootAll and drive
+// the boot itself, on its own server and port.)
+if (~autoBoot ? true) { ~bootRig.(~bootAll) };
 )
 
 
@@ -189,4 +166,5 @@ if (~deviceMissing.(~audioDevice)) {
 // Audio alive?    { SinOsc.ar(440) * 0.1 ! 2 }.play;   // Ctrl+. to stop
 // List banks:     ~dirt.postSampleInfo;
 // Added samples?  ~reloadSamples.();
-// Changed the audio device in config.scd?  s.reboot;  then evaluate the region again.
+// Interfaces:     ~scanDevices.();   then   ~useDevice.("ASIO : ZOOM H8 Audio Driver");
+// Changed the audio device in config.scd?  ~rebootRig.();

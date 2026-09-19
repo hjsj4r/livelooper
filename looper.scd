@@ -1,8 +1,11 @@
 // ============================================================
 //  LIVE LOOPER  ·  looper.scd   (multitrack)
-//  Loaded by startup.scd (REGION 2).
-//  One independent loop per H8 input: record / overdub / clear + a fader each.
+//  Loaded by startup.scd once the server is up.
+//  One independent loop per input: record / overdub / clear + a fader each.
 //  Controlled from the dashboard and the DualSense; both act on the SELECTED track.
+//  Tracks can be added, removed, re-wired and renamed while the rig runs:
+//      ~addTrack.(5, "bass");   ~addTrack.([0, 1], "mic");
+//      ~setTrackInput.(2, 7);   ~renameTrack.(2, "synth");   ~removeTrack.(2);
 // ============================================================
 
 // ── Settings come from config.scd ───────────────────────────
@@ -94,7 +97,11 @@
 // thousands of frames later and must write in place, or it lands at a drifting offset
 // and smears the loop across the buffer.
 ~looperGraph = { |nch|
-    var inChans  = if (nch >= 2) { [\inChanL.ir(0), \inChanR.ir(1)] } { \inChan.ir(0) };
+    // kr, not ir: the input index is a bus number In reads at control rate, so re-wiring
+    // a track to another jack is a .set — no rebuild, no dropout, the loop keeps playing.
+    // Only the channel COUNT is baked in (BufRd/BufWr widths), which is why mono<->stereo
+    // still means a new synth and a new buffer.
+    var inChans  = if (nch >= 2) { [\inChanL.kr(0), \inChanR.kr(1)] } { \inChan.kr(0) };
     var bufnum   = \bufnum.kr(0);
     var recLevel = \recLevel.kr(0), preLevel = \preLevel.kr(1);
     var monLevel = \monLevel.kr(1.0), recRun = \recRun.kr(0);
@@ -132,6 +139,15 @@
     // tail into the loop again on every pass
     var out      = ((old * playing) + (dry * monLevel)) * level;
     BufWr.ar(wsig, bufnum, wIdx, loop: 1);
+    // Meters for the dashboard: what is arriving at the jack, and what the loop itself
+    // is putting out. Silent at meterRate 0 (Impulse never fires again after its first
+    // tick), which is the state until a dashboard subscribes — so a closed dashboard
+    // costs nothing here, and the idle-traffic guarantee holds. Identified by node ID on
+    // the sclang side, since a track's index can change when one is removed.
+    SendReply.kr(Impulse.kr(\meterRate.kr(0)), '/trkMeter', [
+        Amplitude.kr(Mix(dry) / nch, 0.01, 0.15),
+        Amplitude.kr(Mix(old * playing * level) / nch, 0.01, 0.15)
+    ]);
     Out.ar(\outBus.ir(0), if (nch >= 2) { out } { out ! 2 });
 };
 
@@ -191,24 +207,24 @@ SynthDef(\trackFx, { |inBus = 0, out = 0, level = 1|
 // ── Tracks ──────────────────────────────────────────────────
 // gen:        generation token — bumped on record/clear to cancel stale scheduled starts.
 // startCycle: the Tidal cycle the loop was recorded from, so it can be restarted in phase.
-// Re-evaluating this file is an authoring action, not a performance one: free the old
-// synths AND buffers (sclang's GC never reclaims server-side buffers, so just dropping
-// the reference would leak a few MB per reload). Loops survive Ctrl+., not a file reload.
-~tracks !? { ~tracks.do { |t|
-    t[\synth]   !? { t[\synth].free };
-    t[\fxSynth] !? { t[\fxSynth].free };
-    t[\buf]     !? { t[\buf].free };
-    t[\fxBus]   !? { t[\fxBus].free };
-} };
+//
+// The layout — which tracks exist, fed by which jacks, called what — lives in
+// ~trackInputs / ~trackNames. config.scd sets them at boot; ~addTrack and friends change
+// them in the session; Save writes them back. Loading this file (re)builds ~tracks from
+// them, so a reload and a device reboot both come back with the layout you had.
+//
 // inputs is ALWAYS a list, so mono and stereo tracks have the same shape everywhere
 // downstream; only the SynthDef and the buffer's channel count differ.
-~tracks = ~trackInputs.collect { |spec, i|
-    (idx: i,
-        name: (~trackNames !? { ~trackNames[i] }) ?? { "Track " ++ i },
+~newTrack = { |spec, name, i|
+    (idx: i, name: (name ?? { "Track " ++ i }).asString,
         inputs: spec.asArray, state: \idle, buf: nil, synth: nil,
         fxBus: nil, fxSynth: nil, fx: 0.0, cycles: (~numLoopCycles ? 4),
         gen: 0, level: 1.0, startCycle: 0)
 };
+// Something the dashboard can watch: bumped whenever the set of strips changes shape,
+// so it rebuilds them exactly then and never polls names.
+~layoutGen = ~layoutGen ? 0;
+~tracks    = ~tracks ? [];
 if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
     ("config.scd: ~trackNames has " ++ ~trackNames.size ++ " entries but ~trackInputs has "
         ++ ~trackInputs.size ++ " — unnamed tracks fall back to \"Track N\".").warn;
@@ -599,6 +615,75 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
     });
 };
 
+// ── Building one track ──────────────────────────────────────
+// Three steps, each its own function because they happen at different times:
+//   ~allocTrack      buffer + FX bus — once, when the track is created (needs s.sync)
+//   ~buildTrackSynth looper + FX synths — at creation AND after every Ctrl+.
+//   ~freeTrack       everything — on remove, and on a reload of this file
+//
+// Buffers are allocated at the length the slowest supported tempo (~minCps) needs, for
+// the longest selectable loop, plus room for the overlap tail. Recording then never
+// allocates — it only moves \loopFrames — and everything shorter just wraps earlier.
+~loopBufFrames = { ~loopFramesFor.(~minCps, ~maxLoopCycles ? ~numLoopCycles) + ~tailFrames.() };
+
+~allocTrack = { |t|
+    var maxFrames = ~loopBufFrames.();
+    var nch       = t[\inputs].size.clip(1, 2);     // stereo costs twice the buffer
+    t[\buf]        = Buffer.alloc(s, maxFrames, nch);
+    t[\bufFrames]  = maxFrames;
+    t[\cycles]     = t[\cycles] ? ~numLoopCycles;
+    t[\headFrames] = ~headFadeFrames.();
+    t[\tailFrames] = ~tailFrames.();
+    t[\loopFrames] = ~loopFramesFor.(~cps, t[\cycles]).min(maxFrames - t[\tailFrames]);
+    // the looper's output always ends up stereo, so the FX bus is stereo either way
+    t[\fxBus]      = Bus.audio(s, 2);
+    t;
+};
+
+// Node ID -> track, for the meter replies. Rebuilt as synths are, so it can never point
+// at a track that has been removed.
+~meterNodes = ~meterNodes ? IdentityDictionary.new;
+~metersOn   = ~metersOn ? false;
+
+~buildTrackSynth = { |t|
+    var ins  = t[\inputs];
+    var args = [bufnum: t[\buf], loopFrames: t[\loopFrames],
+        headFrames: (t[\headFrames] ? 0), tailFrames: (t[\tailFrames] ? 0),
+        tailCurve: (~tailCurve ? 0.5), recLevel: 0,
+        preLevel: 1, monLevel: ~monLevel, recRun: 0, playing: 0,
+        level: t[\level], outBus: t[\fxBus],
+        meterRate: if (~metersOn) { ~meterRate ? 0 } { 0 }];
+    t[\synth] = if (ins.size >= 2) {
+        Synth(\looperStereo, args ++ [inChanL: ins[0], inChanR: ins[1]]);
+    } {
+        Synth(\looperMono, args ++ [inChan: ins[0]]);
+    };
+    ~meterNodes[t[\synth].nodeID] = t;
+    // addToTail so the FX always runs after every looper. Order among the FX synths
+    // themselves is irrelevant — each reads its own private bus.
+    t[\fxSynth] = Synth(\trackFx, [
+        inBus: t[\fxBus], out: 0, drive: (t[\fx] ? 0),
+        tone: ~fxTone, preHighpass: ~fxPreHighpass
+    ], addAction: \addToTail);
+    t;
+};
+
+// sclang's GC never reclaims server-side buffers, so just dropping the reference would
+// leak a few MB per track per reload — everything is freed by hand. The generation bump
+// comes FIRST: a take still waiting on its bar line would otherwise wake up and .set a
+// synth that no longer exists.
+~freeTrack = { |t|
+    t[\gen]     = (t[\gen] ? 0) + 1;
+    t[\muteGen] = (t[\muteGen] ? 0) + 1;
+    t[\synth]   !? { |x| ~meterNodes.removeAt(x.nodeID); x.free };
+    t[\fxSynth] !? { |x| x.free };
+    t[\buf]     !? { |x| x.free };
+    t[\fxBus]   !? { |x| x.free };
+    t[\synth] = nil; t[\fxSynth] = nil; t[\buf] = nil; t[\fxBus] = nil;
+    t[\state] = \idle;
+    t;
+};
+
 // Build the track synths — and rebuild them after every Ctrl+.
 // Ctrl+. sends /g_freeAll, which kills these synths along with everything else. It does
 // NOT free buffers, so the recorded audio is still there and the loops can be re-armed.
@@ -615,27 +700,10 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
     var silent = ~tracks.collect { |t|
         #[\stopped, \stopping].includes(t[\state]) and: { t[\buf].notNil }
     };
+    ~meterNodes.clear;
     ~tracks.do { |t|
         t[\state] = \idle;
-        (t[\buf].notNil and: { t[\fxBus].notNil }) .if {
-            var ins  = t[\inputs];
-            var args = [bufnum: t[\buf], loopFrames: t[\loopFrames],
-                headFrames: (t[\headFrames] ? 0), tailFrames: (t[\tailFrames] ? 0),
-                tailCurve: (~tailCurve ? 0.5), recLevel: 0,
-                preLevel: 1, monLevel: ~monLevel, recRun: 0, playing: 0,
-                level: t[\level], outBus: t[\fxBus]];
-            t[\synth] = if (ins.size >= 2) {
-                Synth(\looperStereo, args ++ [inChanL: ins[0], inChanR: ins[1]]);
-            } {
-                Synth(\looperMono, args ++ [inChan: ins[0]]);
-            };
-            // addToTail so the FX always runs after every looper. Order among the FX
-            // synths themselves is irrelevant — each reads its own private bus.
-            t[\fxSynth] = Synth(\trackFx, [
-                inBus: t[\fxBus], out: 0, drive: (t[\fx] ? 0),
-                tone: ~fxTone, preHighpass: ~fxPreHighpass
-            ], addAction: \addToTail);
-        };
+        if (t[\buf].notNil and: { t[\fxBus].notNil }) { ~buildTrackSynth.(t) };
     };
     if (~restoreLoopsOnPanic) {
         ~tracks.do { |t, i|
@@ -651,6 +719,7 @@ ServerTree.add(~buildTracks, s);
 // bufnums, flooding the post window until you re-evaluated startup.scd.
 ~forgetTracks !? { ServerQuit.remove(~forgetTracks, s) };
 ~forgetTracks = {
+    ~meterNodes.clear;
     ~tracks.do { |t|
         t[\buf] = nil; t[\synth] = nil; t[\state] = \idle;
         t[\fxBus] = nil; t[\fxSynth] = nil;
@@ -659,38 +728,183 @@ ServerTree.add(~buildTracks, s);
 };
 ServerQuit.add(~forgetTracks, s);
 
-// First build by hand — ServerTree only fires on boot/panic, not on a plain reload.
-// s.sync waits for the SynthDef and then for the buffers to actually exist, rather than
-// assuming they will by some fixed delay.
-//
-// Buffers are allocated ONCE here, mono, at the length the slowest supported tempo
-// (~minCps) needs. Recording then never allocates — it only moves \loopFrames.
-fork {
-    var maxFrames, mb, chans;
-    s.sync;
-    // Sized for the LONGEST selectable loop at the SLOWEST supported tempo, plus room
-    // for the overlap tail. Everything shorter just wraps earlier inside it.
-    maxFrames = ~loopFramesFor.(~minCps, ~maxLoopCycles ? ~numLoopCycles) + ~tailFrames.();
-    chans     = 0;
-    ~tracks.do { |t|
-        var nch = t[\inputs].size.clip(1, 2);      // stereo costs twice the buffer
-        chans          = chans + nch;
-        t[\buf]        = Buffer.alloc(s, maxFrames, nch);
-        t[\bufFrames]  = maxFrames;
-        t[\cycles]     = t[\cycles] ? ~numLoopCycles;
-        t[\headFrames] = ~headFadeFrames.();
-        t[\tailFrames] = ~tailFrames.();
-        t[\loopFrames] = ~loopFramesFor.(~cps, t[\cycles]).min(maxFrames - t[\tailFrames]);
-        // the looper's output always ends up stereo, so the FX bus is stereo either way
-        t[\fxBus]      = Bus.audio(s, 2);
+// ── The layout: add, remove, re-wire, rename ────────────────
+// All of these keep ~trackInputs / ~trackNames in step with ~tracks and mark them
+// unsaved, so Save writes the layout you built and a reload of this file rebuilds it.
+~syncLayoutVars = {
+    ~trackInputs = ~tracks.collect { |t| if (t[\inputs].size >= 2) { t[\inputs].copy } { t[\inputs][0] } };
+    ~trackNames  = ~tracks.collect { |t| t[\name] };
+    ~settingsMarkDirty !? { ~settingsMarkDirty.(\trackInputs); ~settingsMarkDirty.(\trackNames) };
+    ~layoutGen = ~layoutGen + 1;
+};
+
+// A jack must exist on the server as configured. Requesting inputs past what the device
+// physically has is allowed by scsynth (they are silent), so ~numInputs is the ceiling.
+~inputsValid = { |inputs|
+    var n = s.options.numInputBusChannels ? ~numInputs ? 2;
+    var a = inputs.asArray;
+    (a.size >= 1) and: { a.size <= 2 } and: {
+        a.every { |i| i.isNumber and: { i >= 0 } and: { i < n } }
     };
-    s.sync;
-    ~buildTracks.value;
-    mb = (maxFrames * 4 * chans / 1e6).round(0.1);
-    ("Multitrack ready: " ++ ~tracks.size ++ " tracks ("
-        ++ ~tracks.collect({ |t| t[\name] ++ "=" ++ ~inLabel.(t) }).join(", ") ++ ")"
-        ++ " | " ++ (maxFrames / (s.sampleRate ? 44100)).round(0.1) ++ "s max loop, "
-        ++ mb ++ " MB total").postln;
+};
+
+// Append a track fed by `inputs` (an index, or a pair for stereo). Async: the buffer has
+// to exist before the synth reads it, so the strip appears after one server round trip.
+// Returns the new track record straight away, its \synth filled in shortly after.
+~addTrack = { |inputs, name|
+    var ins = inputs.asArray.collect(_.asInteger), t, cap = ~maxTracks ? 12;
+    case
+    { ~tracks.size >= cap } {
+        ("addTrack refused — ~maxTracks is " ++ cap ++ " (config.scd)").warn; nil;
+    }
+    { ~inputsValid.(ins).not } {
+        ("addTrack refused — inputs " ++ ins ++ " must be 1 or 2 indices in 0.."
+            ++ ((s.options.numInputBusChannels ? ~numInputs) - 1)).warn; nil;
+    }
+    {
+        t = ~newTrack.(ins, name, ~tracks.size);
+        ~tracks = ~tracks ++ [t];
+        ~syncLayoutVars.();
+        fork {
+            ~allocTrack.(t);
+            s.sync;
+            // still there? it can be removed before the buffer lands
+            if (~tracks.any { |x| x === t }) {
+                ~buildTrackSynth.(t);
+                (~tlabel.(t) ++ " ADDED — in " ++ ~inLabel.(t)).postln;
+            } {
+                ~freeTrack.(t);
+            };
+        };
+        t;
+    };
+};
+
+// Remove a track and renumber the ones after it. The focus and the pins move with the
+// tracks they were on: a pin on t5 is a pin on the same audio after t2 goes, so it
+// becomes t4. The focus, if it was on the removed track, lands on whatever slid into
+// its slot — the next track, or the mixer if it was the last one.
+~removeTrack = { |i|
+    var t = ~tracks[i], f = ~focus ? 0;
+    if (t.isNil) {
+        ("removeTrack: no track " ++ i).warn; nil;
+    } {
+        ~freeTrack.(t);
+        ~tracks = ~tracks.reject { |x| x === t };
+        ~tracks.do { |x, k| x[\idx] = k };
+        ~pinned = (~pinned ? []).reject({ |k| k == i }).collect { |k| if (k > i) { k - 1 } { k } };
+        if (f > i) { ~focus = f - 1 } { ~focus = f.clip(0, ~navSize.() - 1) };
+        ~syncLayoutVars.();
+        (~tlabel.(t) ++ " REMOVED — " ++ ~tracks.size ++ " tracks").postln;
+        t;
+    };
+};
+
+// Feed a track from a different jack. Same width (mono->mono, pair->pair) is a .set on
+// the running synth: the loop keeps playing, and an overdub in progress keeps going on
+// the new signal. Changing WIDTH rebuilds the buffer, because BufRd/BufWr channel counts
+// are fixed when the SynthDef is built — that clears the loop, and the post window says
+// so before it happens.
+~setTrackInput = { |i, inputs|
+    var t = ~tracks[i], ins = inputs.asArray.collect(_.asInteger);
+    case
+    { t.isNil } { ("setTrackInput: no track " ++ i).warn; nil }
+    { ~inputsValid.(ins).not } {
+        ("setTrackInput refused — inputs " ++ ins ++ " must be 1 or 2 indices in 0.."
+            ++ ((s.options.numInputBusChannels ? ~numInputs) - 1)).warn; nil;
+    }
+    { ins == t[\inputs] } { t }
+    { ins.size == t[\inputs].size } {
+        t[\inputs] = ins;
+        t[\synth] !? { |x|
+            if (ins.size >= 2) { x.set(\inChanL, ins[0], \inChanR, ins[1]) } { x.set(\inChan, ins[0]) };
+        };
+        ~syncLayoutVars.();
+        (~tlabel.(t) ++ " now on in " ++ ~inLabel.(t)).postln;
+        t;
+    }
+    {
+        if (t[\state] != \idle) {
+            (~tlabel.(t) ++ " mono<->stereo change — the loop is cleared").postln;
+        };
+        ~freeTrack.(t);
+        t[\inputs] = ins;
+        ~syncLayoutVars.();
+        fork {
+            ~allocTrack.(t);
+            s.sync;
+            if (~tracks.any { |x| x === t }) { ~buildTrackSynth.(t) } { ~freeTrack.(t) };
+            (~tlabel.(t) ++ " rebuilt " ++ if (ins.size >= 2) { "stereo" } { "mono" }
+                ++ " on in " ++ ~inLabel.(t)).postln;
+        };
+        t;
+    };
+};
+
+~renameTrack = { |i, name|
+    var t = ~tracks[i];
+    if (t.isNil) { ("renameTrack: no track " ++ i).warn; nil } {
+        t[\name] = name.asString.stripWhiteSpace;
+        if (t[\name].isEmpty) { t[\name] = "Track " ++ i };
+        ~syncLayoutVars.();
+        t;
+    };
+};
+
+// Throw the session's tracks away and build the layout ~trackInputs / ~trackNames
+// describe. This is what loading the file does, and what "reload from file" does when
+// the file's layout differs from the session's. Loops do not survive it — a reload is an
+// authoring action, not a performance one; Ctrl+. is the live one and keeps them.
+~rebuildTracks = {
+    ~tracks.do { |t| ~freeTrack.(t) };
+    ~tracks = ~trackInputs.collect { |spec, i|
+        ~newTrack.(spec, ~trackNames !? { ~trackNames[i] }, i)
+    };
+    ~pinned = (~pinned ? []).select { |k| k < ~tracks.size };
+    ~focus  = (~focus ? 0).clip(0, ~navSize.() - 1);
+    ~layoutGen = ~layoutGen + 1;
+    // s.sync waits for the SynthDef and then for the buffers to actually exist, rather
+    // than assuming they will by some fixed delay.
+    fork {
+        var maxFrames, mb, chans = 0, nIn;
+        s.sync;
+        ~tracks.do { |t| ~allocTrack.(t); chans = chans + t[\inputs].size.clip(1, 2) };
+        s.sync;
+        ~buildTracks.value;
+        maxFrames = ~loopBufFrames.();
+        mb = (maxFrames * 4 * chans / 1e6).round(0.1);
+        ("Multitrack ready: " ++ ~tracks.size ++ " tracks ("
+            ++ ~tracks.collect({ |t| t[\name] ++ "=" ++ ~inLabel.(t) }).join(", ") ++ ")"
+            ++ " | " ++ (maxFrames / (s.sampleRate ? 44100)).round(0.1) ++ "s max loop, "
+            ++ mb ++ " MB total").postln;
+        // A layout written for one interface, booted on another with fewer inputs: the
+        // track still builds (an index past the inputs reads an ordinary silent bus), but
+        // say so, because "no signal" would otherwise look like a cable problem.
+        nIn = s.options.numInputBusChannels ? ~numInputs ? 2;
+        ~tracks.do { |t|
+            if (t[\inputs].any { |i| i >= nIn }) {
+                (~tlabel.(t) ++ " input " ++ ~inLabel.(t) ++ " is beyond the " ++ nIn
+                    ++ " inputs this device was booted with — silent until re-wired").warn;
+            };
+        };
+    };
+};
+~rebuildTracks.();
+
+// ── Meters ──────────────────────────────────────────────────
+// The synths report in only while a dashboard is subscribed (dashboard.scd keeps
+// ~metersOn alive from the browser's heartbeat). Turning it on is a .set of the reply
+// rate on every synth; off is rate 0, which stops the Impulse dead.
+OSCdef(\trkMeter, { |msg|
+    ~meterNodes[msg[1]] !? { |t| t[\inAmp] = msg[3]; t[\outAmp] = msg[4] };
+}, '/trkMeter').fix;
+
+~setMeters = { |on|
+    var rate = if (on) { ~meterRate ? 0 } { 0 };
+    ~metersOn = on and: { rate > 0 };
+    ~tracks.do { |t| t[\synth] !? { |x| x.set(\meterRate, rate) } };
+    if (~metersOn.not) { ~tracks.do { |t| t[\inAmp] = 0; t[\outAmp] = 0 } };
+    ~metersOn;
 };
 
 // ── MIDI ────────────────────────────────────────────────────

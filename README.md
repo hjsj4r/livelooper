@@ -2,7 +2,8 @@
 
 Music coding + live guitar looping, tightly synced. **TidalCycles** generates the
 patterns; **SuperCollider** runs SuperDirt (drums/samples), the guitar loopers, and a
-tempo-locked click. A **Roland SPD-SX PRO** drives the loopers hands-free.
+tempo-locked click. A **DualSense** controller drives the loopers hands-free, and the rig
+runs on whatever audio interface is plugged in — pick it from the dashboard.
 
 > Migrated off Strudel — no browser, no `node server.js` OSC bridge. Tidal sends OSC
 > to SuperDirt directly over UDP.
@@ -14,8 +15,10 @@ TidalCycles (Haskell, code)  ──OSC──►  SuperCollider
                                          ├─ SuperDirt   (drums / samples)
                                          ├─ Loopers     (guitar, cycle-synced)
                                          ├─ Click       (panned RIGHT — L/R hack)
+                                         ├─ Devices     (scan interfaces, switch live)
                                          └─ Dashboard   (DualSense + browser UI)
-                                       → ZOOM H8:  L = music → PA (mono cable)
+                                       → any interface. On the ZOOM H8:
+                                                   L = music → PA (mono cable)
                                                    R = click → your headphones
 ```
 
@@ -56,7 +59,8 @@ clone the folder anywhere.
 | Change | Then |
 |---|---|
 | Track inputs, click, loop length and join | re-evaluate `startup.scd` |
-| Audio device, sample rate, channel counts | `s.reboot;` then re-evaluate `startup.scd` |
+| Audio device, sample rate, channel counts | dashboard → Setup → Apply, or `~rebootRig.();` |
+| Tracks: add / remove / re-wire / rename | dashboard → Setup → Tracks, no restart |
 | Added a sample bank to `samples/` | `~reloadSamples.();` |
 | Need a Dirt-Samples bank you trimmed out | `~loadBanks.([\tabla]);` — no restart |
 
@@ -85,6 +89,7 @@ sequence — map it rather than guessing:
 |---|---|
 | `config.scd`   | **All settings** — device, tracks, loop join, click, ports |
 | `startup.scd`  | One-evaluation boot: server + SuperDirt + everything else |
+| `devices.scd`  | Lists the audio interfaces (with channel counts) and moves the rig onto one |
 | `looper.scd`   | Multitrack loopers (one per input) + faders + FX |
 | `click.scd`    | Tempo-locked click, right channel |
 | `settings.scd` | Config values editable from the dashboard, and written back |
@@ -109,6 +114,8 @@ sequence — map it rather than guessing:
 | `test/stereo-test.scd` | Regression test for stereo (two-input) tracks |
 | `test/fx-test.scd` | Regression test for the per-track FX chain |
 | `test/join-test.scd` | Regression test for loop length + the head fade and tail |
+| `test/layout-test.scd` | Regression test for add / remove / re-wire / rename + saving the layout |
+| `test/devices-test.scd` | Regression test for the device scan and a live server switch |
 
 ## Roadmap
 
@@ -135,9 +142,17 @@ sequence — map it rather than guessing:
         setting, project path is derived (folder is portable), `s.waitForBoot` replaced
         the two-region dance and the fixed-delay timing hacks, and a missing audio device
         now fails with a readable error instead of hanging.
-- [x] **4. UI dashboard** — metronome, sample browser + preview, and **multitrack strips**
-        (per-track record/overdub/clear + fader, click a strip to select it).
-        Tracks configured in `looper.scd` via `~trackInputs`. Optional next: per-track waveforms.
+- [x] **4. UI dashboard** — metronome and **multitrack strips** (per-track
+        record/overdub/clear + fader, click a strip to select it). The sample browser it
+        once had is gone; Tidal's editor is where samples get auditioned.
+- [x] **12. Any audio interface** — the dashboard scans every device the machine can see,
+        *with* its input/output counts (from a throwaway `scsynth`, since the sclang API
+        only knows names), and switches the running rig onto one: a server quit + boot
+        through the same path as the first boot of the day. Tracks are **built from the
+        dashboard** — add, remove, re-wire, rename, up to `~maxTracks` — and Save writes
+        the layout and the device back into `config.scd`. Perform / Setup views, input
+        meters on every strip, a loop play head, keyboard shortcuts. Covered by
+        `test/layout-test.scd` and `test/devices-test.scd`.
 
 ## How loops line up
 
@@ -201,13 +216,15 @@ the system default device):
 $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/panic-test.scd       # 26 passed
 & $sc -D d:/livelooper/test/looper-test.scd      # 34 passed
-& $sc -D d:/livelooper/test/dashboard-test.scd   # 49 passed
+& $sc -D d:/livelooper/test/dashboard-test.scd   # 50 passed
 & $sc -D d:/livelooper/test/nav-test.scd         # 29 passed
 & $sc -D d:/livelooper/test/stereo-test.scd      # 12 passed
 & $sc -D d:/livelooper/test/fx-test.scd          # 19 passed
 & $sc -D d:/livelooper/test/join-test.scd        # 44 passed
 & $sc -D d:/livelooper/test/select-test.scd      # 65 passed
 & $sc -D d:/livelooper/test/acid-test.scd        # 40 passed
+& $sc -D d:/livelooper/test/layout-test.scd      # 73 passed
+& $sc -D d:/livelooper/test/devices-test.scd     # 36 passed  (boots its own server twice)
 ```
 
 None of them needs the H8, and **they're safe to run while your rig is booted** — each
@@ -263,10 +280,91 @@ is line-surgical: only the number on each assignment line is replaced, so every 
 ladder and measurement in that file survives untouched. The previous version is kept as
 `config.scd.bak`. `Reload from file` throws away unsaved changes and re-reads the file.
 
-Anything that decides how the server or the tracks were *built* — audio device, sample
-rate, channel counts, `~trackInputs`, `~minCps`, `~maxLoopCycles`, ports — is deliberately
-not there. Those need a restart, and a slider that silently did nothing would be worse
-than no slider.
+The rig's *shape* — audio device, sample rate, channel counts, the track layout — has no
+slider, because changing it rebuilds synths or restarts the server. Those live in the
+**Audio interface** and **Tracks** panels of the Setup view (below), and the same Save
+button writes them back: `~audioDevice`, `~inDevice`, `~outDevice`, `~sampleRate`,
+`~numInputs`, `~numOutputs`, `~trackInputs` and `~trackNames` are rewritten in place like
+the numbers are. `~minCps`, `~maxLoopCycles` and the ports remain editor-only.
+
+## Audio interfaces
+
+The dashboard's **Setup** view lists every audio device on the machine with its input and
+output counts, and moves the rig onto one. Click a device to use it for both directions
+(what an ASIO driver requires); shift-click / alt-click picks it for input or output only,
+which the other Windows driver classes (WASAPI, MME, DirectSound, WDM-KS) need, since they
+expose inputs and outputs as separate endpoints. Then **Apply**.
+
+Two facts shape how this works:
+
+- **The channel counts come from `scsynth`, not sclang.** `ServerOptions.devices` returns
+  names only. The one thing that knows how many channels a device has is the server,
+  which prints the whole table every time it boots — so the scan launches a throwaway
+  `scsynth` on a spare port (`~scanPort`) with a sample rate no device accepts (`-S 1`):
+  it enumerates everything, fails to open a stream, and exits on its own in under a
+  second. The running server never notices, and the click keeps ticking (the launch is
+  non-blocking).
+- **Switching is a server restart.** Device, rate and channel counts are server options,
+  read once at boot; there is no "change device" message. So Apply quits the server,
+  sets the options and boots again through the same `~bootAll` as the first boot of the
+  day. Everything that survives `Ctrl+.` survives this too — the `ServerQuit` hooks
+  forget SuperDirt and the buffers, the `ServerTree` hooks rebuild. **Loops do not
+  survive** (buffers die with the server); the **track layout does**. The page asks
+  before restarting if anything is playing, and shows a banner until the rig is back.
+
+A rig whose configured interface is unplugged no longer just fails in the post window:
+the dashboard comes up anyway (the device, settings and dashboard modules load *before*
+the boot), reports `device not found`, and lets you pick what *is* there. From the
+editor: `~scanDevices.();` then `~useDevice.("ASIO : ZOOM H8 Audio Driver");`.
+
+Asking for more input channels than a device has is safe — scsynth boots and the extra
+channels are silent — so a layout written for the H8's 12 inputs still builds on a 2-in
+laptop mic. Each such track gets a warning in the post window and reads "not on this
+device" in the Setup menus until it is re-wired.
+
+## Tracks from the dashboard
+
+The **Tracks** panel in Setup is where the layout is built: name, input jack (one, or a
+pair for stereo), a live input meter so you can *see* which jack you plugged into, and
+Remove. **Add track** appends — never inserts — so existing strips keep their numbers.
+
+- **Re-wiring a track to another jack keeps its loop.** The input index is a control-rate
+  bus number the synth reads, so the change is a `.set`, with no dropout — an overdub in
+  progress simply continues on the new signal.
+- **Changing between mono and a stereo pair rebuilds the track and clears its loop**,
+  because BufRd/BufWr channel counts are fixed when the SynthDef is built. The page asks
+  first if the track is playing.
+- The cap is `~maxTracks` (12). Each track costs a looper + FX synth and one pre-allocated
+  buffer — ~7 MB mono, ~14 MB stereo at the defaults — so the limit is the interface's
+  input count and a strip list you can still navigate mid-set, not the machine.
+
+From the editor: `~addTrack.(5, "bass");  ~addTrack.([0, 1], "mic");
+~setTrackInput.(2, 7);  ~renameTrack.(2, "synth");  ~removeTrack.(2);`
+
+The layout lives in `~trackInputs` / `~trackNames` — the same variables `config.scd`
+sets at boot — so it survives a reload of `looper.scd` and a device switch, and Save
+writes it into the file. `Reload from file` rebuilds the tracks only if the file's layout
+differs from the session's.
+
+## The dashboard: Perform and Setup
+
+The page has two views. **Perform** is the stage screen: metronome, strips, mixer.
+**Setup** is soundcheck: audio interface, tracks, settings, the controller legend and the
+keyboard map, with a sticky Save bar. Keys `1` / `2` switch; the metronome, the gamepad
+and the state stream keep running whichever is showing. A dot on the Setup tab means
+something is unsaved.
+
+Every strip carries an **input meter** (signal at the jack; red at clipping) and, once it
+holds a loop, a **play head** along its bottom edge with a tick per bar — so you see the
+bar line coming before you punch in. The play head costs no traffic: buffers are locked
+to the phrase grid, so a 4-bar loop is at `(cycle mod 4) / 4` and the browser places it
+from the clock reference it already has. The meters do cost traffic (`~meterRate`, 12/s),
+and only flow while a *visible* dashboard keeps renewing a subscription every 2 s: close
+or hide the tab and the synths go quiet within 5 s, so the idle-traffic guarantee holds.
+
+**Keyboard**: `↑ ↓` select, `← →` level (shift = fine), `R` record, `O` overdub, `C`
+clear, `space` stop/start on the bar, `P` pin, `K` click. Nothing fires while a text box
+or menu has the cursor.
 
 ## The loop join
 
