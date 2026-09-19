@@ -1,6 +1,6 @@
 // ============================================================
 //  LIVE LOOPER  ·  acid.scd
-//  SynthDefs for acid.tidal — a sawtooth and a supersaw with their OWN filter
+//  SynthDefs for an acid patch — a sawtooth and a supersaw with their OWN filter
 //  envelope, plus a sidechain ducker.
 //
 //  WHY THIS FILE EXISTS

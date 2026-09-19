@@ -42,3 +42,7 @@ desktop.ini
 
 # Claude Code local permissions — machine-specific, not project config
 .claude/settings.local.json
+
+# Personal .tidal scratch files — kept out of the repo (removed from history 2026-09-19)
+acid.tidal
+sr-matanza.tidal

@@ -94,7 +94,6 @@ sequence — map it rather than guessing:
 | `click.scd`    | Tempo-locked click, right channel |
 | `settings.scd` | Config values editable from the dashboard, and written back |
 | `acid.scd`     | sawtooth + supersaw + subkick, and a sidechain ducker |
-| `acid.tidal`   | An acid patch translated from Strudel (needs `acid.scd`) |
 | `dashboard.scd`| Streams state to / takes commands from the web dashboard |
 | `dashboard/server.js` | Pure-Node bridge (SC ↔ browser). Run: `node server.js` |
 | `dashboard/index.html`| The web dashboard UI |
