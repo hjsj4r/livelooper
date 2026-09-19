@@ -9,7 +9,7 @@
 //  Run it headless (no ZOOM H8 needed — it boots the system default device):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/devices-test.scd
 //
-//  Expect: "36 passed, 0 failed".
+//  Expect: "40 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, canned, devs, scanned = nil, t0, rigs = 0, lastRig, dirtPlays;
@@ -111,6 +111,25 @@ fork {
     ok.("tracks rebuilt",                  ~tracks.size == 2 and: { ~tracks.every { |t| t[\buf].notNil } });
     ok.("still exactly one Tidal responder (old SuperDirt freed)", dirtPlays.() == 1);
     ok.("click scheduler alive",           ~clickTask.notNil and: { ~clickTask.isPlaying });
+
+    "".postln; "--- THE QUIT NEVER REPORTS BACK ---".postln;
+    // scsynth on Windows sometimes dies with an access violation while closing its
+    // PortAudio stream, before it answers /quit — and if the server was never `notified`
+    // sclang's quit watcher registers nothing at all. Either way neither of quit's
+    // callbacks runs. Simulated by a quit whose callbacks are swallowed: the real quit
+    // happens, the process goes, nobody tells ~rebootRig. Its watchdog must notice.
+    ~quitServer = { |onDone, onFail| s.quit({ }, { }) };
+    t0 = Main.elapsedTime;
+    ~rebootRig.();
+    waitFor.({ s.serverRunning.not }, 10);
+    ok.("server is gone, no callback fired",  s.serverRunning.not and: { ~bootState == \booting });
+    waitFor.({ ~bootState == \ready and: { s.serverRunning } }, 60);
+    ("        (back in " ++ (Main.elapsedTime - t0).round(0.1) ++ "s)").postln;
+    waitFor.({ ~tracks.size == 2 and: { ~tracks.every { |t| t[\synth].notNil } } }, 20);
+    ok.("...and the rig still comes back",    ~bootState == \ready and: { s.serverRunning });
+    ok.("tracks rebuilt after the crash",     ~tracks.size == 2 and: { ~tracks.every { |t| t[\buf].notNil } });
+    ok.("one Tidal responder after the crash", dirtPlays.() == 1);
+    ~quitServer = { |onDone, onFail| s.quit(onDone, onFail) };
 
     "".postln;
     ("======== " ++ pass ++ " passed, " ++ fail ++ " failed ========").postln;

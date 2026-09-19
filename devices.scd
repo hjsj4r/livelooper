@@ -226,15 +226,51 @@
 // Quit's completion callback is where the boot goes, NOT s.reboot: reboot boots on its
 // own AND we need waitForBoot to run ~bootAll, and two boots in flight at once is a
 // "server already booting" mess. This way the sequence is quit -> options -> boot -> rig.
+//
+// THE QUIT CAN FAIL AND STILL SUCCEED. scsynth on Windows sometimes dies with an access
+// violation while closing a PortAudio stream (MME/WASAPI especially) — it posts "exited
+// with exit code -1073741819" and never sends the /done that quit's completion callback
+// waits for. The process is gone, which is all a reboot needs, but left alone that
+// callback never fires and the rig stays down. So the failure callback (3 s later)
+// checks whether the server is actually still there, and boots if it is not.
+// And sclang's quit watcher has a second hole: if the server was never `notified`, it
+// registers NO watcher at all and neither callback ever runs. So a watchdog of our own
+// checks a beat after quit's own 3 s deadline: nothing has happened and the process is
+// gone -> boot. (~quitServer is a seam: test/devices-test.scd stubs it with a quit whose
+// callbacks never return, which is the symptom, and the watchdog has to recover.)
+~quitServer = ~quitServer ? { |onDone, onFail| s.quit(onDone, onFail) };
+~rebootWatchdogSecs = 4.0;
 ~rebootRig = {
+    var gen, done = false, go;
     ~bootAll ?? {
         Error("~rebootRig: ~bootAll is not defined. Evaluate startup.scd instead.").throw
     };
+    ~rebootGen = (~rebootGen ? 0) + 1;
+    gen = ~rebootGen;
+    go  = { if (done.not) { done = true; ~bootRig.(~bootAll) } };
     ~setBootState.(\booting, "restarting the server...");
     if (s.serverRunning) {
-        s.quit({ ~bootRig.(~bootAll) }, { ~setBootState.(\failed, "the server did not quit") });
+        ~quitServer.(go, {
+            if (s.serverRunning.not) {
+                "devices: the server crashed on the way out — booting anyway".postln;
+                go.();
+            } {
+                ~setBootState.(\failed, "the server did not quit — see the post window");
+            };
+        });
+        SystemClock.sched(~rebootWatchdogSecs, {
+            if (done.not and: { gen == ~rebootGen }) {
+                if (s.serverRunning.not) {
+                    "devices: no answer to /quit but the server is gone — booting anyway".postln;
+                    go.();
+                } {
+                    ~setBootState.(\failed, "the server did not quit — see the post window");
+                };
+            };
+            nil;
+        });
     } {
-        ~bootRig.(~bootAll);
+        go.();
     };
 };
 

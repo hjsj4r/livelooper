@@ -68,15 +68,21 @@
 // Mapped with tools/input-scan.scd. SC 10 and 11 carry the H8's MIX (they light up for
 // every source), so they are deliberately not tracks — 2 and 3 were unused.
 //
-// This is the layout the rig BOOTS with. Tracks can also be added, removed, renamed and
-// re-wired from the dashboard's Setup view while the rig runs; Save writes the result
-// back to these two lines.
-~trackInputs   = [[0, 1], 5, 9, 7, 8, 4, 6];
+// A session STARTS EMPTY: tracks are added from the dashboard's Setup view (or
+// ~addTrack.() in the editor), each on the jack you choose, with a live meter to confirm
+// it. Whatever is listed here is only what the rig boots with — a layout you have pressed
+// Save on. Leave both empty to always start from nothing. (Saving a whole session —
+// layout plus levels, lengths and so on — is planned separately.)
+//
+// The H8 layout that used to live here, for reference:
+//     ~trackInputs = [[0, 1], 5, 9, 7, 8, 4, 6];
+//     ~trackNames  = ["mic", "bass", "synth", "voice", "spdsx", "bomboclat", "overhead"];
+~trackInputs   = [];
 
 // Display names, in the same order. Shown on the dashboard strips and in the post
 // window. tools/input-scan.scd prints this line alongside ~trackInputs so the two
 // cannot drift apart. A missing name falls back to "Track N".
-~trackNames    = ["mic", "bass", "synth", "voice", "spdsx", "bomboclat", "overhead"];
+~trackNames    = [];
 
 // Ceiling on tracks the dashboard will let you add. Each one costs a looper + FX synth
 // (cheap) and a pre-allocated buffer: at the defaults below that is ~7 MB mono, ~14 MB

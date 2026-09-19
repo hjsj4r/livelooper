@@ -32,6 +32,9 @@ s.waitForBoot({
     fork {
         1.0.wait;
         "D:/livelooper/config.scd".load;
+        // a session starts with no tracks, so the test brings its own layout
+        ~trackInputs = [9, 8, 5, [4, 7], 6];
+        ~trackNames  = ["a", "b", "c", "pair", "e"];
         // Point the dashboard feed at ourselves so we can count what it emits.
         ~dashPort = NetAddr.langPort;
         ~dirtPort = NetAddr.langPort;

@@ -37,6 +37,10 @@ TidalCycles (Haskell, code)  ──OSC──►  SuperCollider
 3. VS Code → `Tidal: Boot`.
 4. *(optional)* Dashboard: in a terminal, `cd dashboard` then `node server.js`, and open
    **http://localhost:3000**. No `npm install` needed.
+5. **Setup → Tracks → Add track** for each thing you are looping. A session starts with
+   **no tracks**; each one is added on the jack you choose, and the meter beside it shows
+   the signal, so there is nothing to map by hand. Save writes the layout to `config.scd`
+   if you want the rig to boot with it next time. (Saving whole sessions is planned.)
 
 Re-evaluating step 2 is safe and fast: it reloads the code without re-scanning the sample
 library and without interrupting audio. Use it to apply an edit mid-session.
@@ -223,7 +227,7 @@ $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/select-test.scd      # 65 passed
 & $sc -D d:/livelooper/test/acid-test.scd        # 40 passed
 & $sc -D d:/livelooper/test/layout-test.scd      # 73 passed
-& $sc -D d:/livelooper/test/devices-test.scd     # 36 passed  (boots its own server twice)
+& $sc -D d:/livelooper/test/devices-test.scd     # 40 passed  (boots its own server twice)
 ```
 
 None of them needs the H8, and **they're safe to run while your rig is booted** — each
@@ -310,6 +314,9 @@ Two facts shape how this works:
   forget SuperDirt and the buffers, the `ServerTree` hooks rebuild. **Loops do not
   survive** (buffers die with the server); the **track layout does**. The page asks
   before restarting if anything is playing, and shows a banner until the rig is back.
+  If scsynth crashes on the way out — it sometimes does on Windows while closing an
+  MME/WASAPI stream, and then never answers `/quit` — a watchdog notices the process is
+  gone and boots anyway, a few seconds later.
 
 A rig whose configured interface is unplugged no longer just fails in the post window:
 the dashboard comes up anyway (the device, settings and dashboard modules load *before*
@@ -323,7 +330,8 @@ device" in the Setup menus until it is re-wired.
 
 ## Tracks from the dashboard
 
-The **Tracks** panel in Setup is where the layout is built: name, input jack (one, or a
+A session starts with **zero tracks**. The **Tracks** panel in Setup is where the layout
+is built: name, input jack (one, or a
 pair for stereo), a live input meter so you can *see* which jack you plugged into, and
 Remove. **Add track** appends — never inserts — so existing strips keep their numbers.
 

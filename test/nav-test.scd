@@ -36,6 +36,9 @@ s.waitForBoot({
     fork {
         1.0.wait;
         "D:/livelooper/config.scd".load;
+        // a session starts with no tracks, so the test brings its own layout
+        ~trackInputs = [9, 8, 5, [4, 7], 6, 3];   // six: the transport section indexes ~tracks[5]
+        ~trackNames  = ["a", "b", "c", "pair", "e", "f"];
         ~dirtPort = NetAddr.langPort;
         ~dirt = SuperDirt(2, s);
         ~dirt.start(~dirtPort, [0, 0]);
