@@ -137,6 +137,7 @@
 
     (~projectDir ++ "looper.scd").load;
     (~projectDir ++ "click.scd").load;
+    (~projectDir ++ "vst.scd").load;
 
     "".postln;
     "=== LIVE LOOPER READY ===".postln;

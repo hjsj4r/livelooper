@@ -264,6 +264,16 @@
         <input type="range" id="clickAmp" min="0" max="1" step="0.01" value="0.5">
       </div>
     </div>
+
+    <!-- VST instruments: played from Tidal (# s "name") or from the MIDI keyboard. They
+         are not part of the stick's selection list (yet) — level from the mouse here. -->
+    <div class="panel" id="vstPanel" style="display:none">
+      <div class="label row">
+        <span>Instruments</span>
+        <span class="dim" id="vstHint">MIDI keyboard → the one marked</span>
+      </div>
+      <div class="tracks" id="vsts"></div>
+    </div>
   </div>
 
   <!-- ================= SETUP ================= -->
@@ -326,6 +336,34 @@
         Re-wiring a track to another jack keeps its loop. Changing it between mono and a stereo pair rebuilds
         it and clears the loop. Order is strip order — tracks are appended, never inserted, so nothing moves
         under your fingers.
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="label row">
+        <span>Instruments (VST)</span>
+        <span><button class="act small" id="vstScan">Rescan plugins</button></span>
+      </div>
+      <div class="note" id="vstMissing" style="display:none;margin-top:0">
+        The <b>VSTPlugin</b> extension is not installed in SuperCollider, so instruments are off. See the README.
+      </div>
+      <table class="tt" id="vstTable">
+        <thead><tr><th>#</th><th>name (Tidal: <code># s "name"</code>)</th><th>plugin</th><th>state</th><th></th></tr></thead>
+        <tbody id="vstBody"></tbody>
+        <tfoot>
+          <tr class="new">
+            <td class="idx">+</td>
+            <td><input type="text" id="vstNewName" placeholder="name, e.g. surge"></td>
+            <td><select id="vstNewPlugin"></select></td>
+            <td><span class="dim" id="vstCount"></span></td>
+            <td><button class="add" id="vstAdd">Add instrument</button></td>
+          </tr>
+        </tfoot>
+      </table>
+      <div class="note">
+        Plugins are found in the standard VST folders plus <code>~vstDirs</code> (config.scd). Each instrument's
+        state is snapshotted every minute so it survives Ctrl+. and a device switch; the plugin's own window
+        opens from the Perform view.
       </div>
     </div>
 
@@ -827,10 +865,10 @@ let rig = { state: 'off', msg: '', inDev: '', outDev: '', rate: 0, ins: 0, outs:
 let devices = [];
 let devTouched = false;    // once you have edited the device form, /rig stops overwriting it
 function applyRig(args) {
-  const [state, msg, inDev, outDev, rate, ins, outs, maxTracks, runIn, runOut, runRate, scanning] = args;
+  const [state, msg, inDev, outDev, rate, ins, outs, maxTracks, runIn, runOut, runRate, scanning, maxVsts] = args;
   const wasIns = rig.ins;
   rig = { state, msg, inDev, outDev, rate: +rate, ins: +ins, outs: +outs, maxTracks: +maxTracks,
-          runIn, runOut, runRate: +runRate, scanning: +scanning };
+          runIn, runOut, runRate: +runRate, scanning: +scanning, maxVsts: +maxVsts || 8 };
   const pill = $('rigPill');
   pill.className = 'pill ' + state;
   pill.textContent = { ready: 'SC: ready', booting: 'SC: ' + (msg || 'booting…'), failed: 'SC: ' + (msg || 'failed'),
@@ -1005,6 +1043,88 @@ $('addTrack').onclick = () => {
 };
 $('newName').onkeydown = (e) => { if (e.key === 'Enter') $('addTrack').click(); };
 
+// ---- VST instruments ----
+// SC owns the list; this only draws it. /vstInit is re-sent whenever an instrument is
+// added, removed, changes state (opening -> open / failed) or takes the keyboard.
+let vsts = [], vstMidi = -1, vstAvailable = false, vstPlugins = [];
+const VST_STATE = { open: '--play', opening: '--armed', failed: '--rec', closed: '--idle' };
+function applyVsts(args) {
+  const [n, midi, avail] = args;
+  vstMidi = +midi; vstAvailable = !!+avail;
+  vsts = [];
+  for (let i = 3; i + 2 < args.length; i += 3) vsts.push({ name: String(args[i]), plugin: String(args[i + 1]), state: String(args[i + 2]) });
+  // Perform strips
+  $('vstPanel').style.display = vsts.length ? '' : 'none';
+  const c = $('vsts'); c.innerHTML = '';
+  vsts.forEach((v, idx) => {
+    const el = document.createElement('div');
+    el.className = 'track';
+    el.innerHTML =
+      `<div class="track-id"><div class="track-name" title="${esc(v.plugin)}">${esc(v.name)}</div>` +
+      `<div class="track-in">${esc(v.plugin.replace(/\.vst3?$/i, ''))}<span class="meter" title="output level"><i></i></span></div></div>` +
+      `<span class="track-badge" style="background:${getComputedStyle(document.documentElement).getPropertyValue(VST_STATE[v.state] || '--idle')}">${esc(v.state)}</span>` +
+      `<input type="range" class="fader" min="0" max="1" step="0.01" value="1">` +
+      `<button class="midi ${idx === vstMidi ? 'on' : ''}" title="send the MIDI keyboard here">${idx === vstMidi ? '● MIDI' : 'MIDI'}</button>` +
+      `<button class="edit" title="open the plugin's own window" ${v.state === 'open' ? '' : 'disabled'}>Editor</button>`;
+    el.querySelector('.fader').oninput = (e) => {
+      lastLocalEdit['vst' + idx] = performance.now();
+      cmd('/cmd/vstLevel', [idx, parseFloat(e.target.value)]);
+    };
+    el.querySelector('.midi').onclick = () => cmd('/cmd/vstMidi', [idx === vstMidi ? -1 : idx]);
+    el.querySelector('.edit').onclick = () => cmd('/cmd/vstEditor', [idx]);
+    c.appendChild(el);
+  });
+  $('vstHint').textContent = vstMidi >= 0 && vsts[vstMidi] ? `MIDI keyboard → ${vsts[vstMidi].name}` : 'MIDI keyboard → nothing (press MIDI on one)';
+  // Setup table
+  $('vstMissing').style.display = vstAvailable ? 'none' : '';
+  $('vstTable').style.display = vstAvailable ? '' : 'none';
+  const body = $('vstBody'); body.innerHTML = '';
+  vsts.forEach((v, idx) => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="idx">${idx}</td><td>${esc(v.name)}</td><td class="dim">${esc(v.plugin)}</td>` +
+      `<td>${esc(v.state)}</td><td><button class="rm">Remove</button></td>`;
+    tr.querySelector('.rm').onclick = () => {
+      if (!confirm(`Remove "${v.name}"? Tidal patterns using # s "${v.name}" go silent.`)) return;
+      cmd('/cmd/vstRemove', [idx]);
+    };
+    body.appendChild(tr);
+  });
+  $('vstCount').textContent = `${vsts.length} of ${rig.maxVsts || 8}`;
+  $('vstAdd').disabled = !vstAvailable || !vstPlugins.length;
+}
+function applyVstPlugins(args) {
+  vstPlugins = args.map(String);
+  const sel = $('vstNewPlugin'), keep = sel.value;
+  sel.innerHTML = vstPlugins.length ? '' : '<option value="">no plugins found — Rescan</option>';
+  for (const p of vstPlugins) { const o = document.createElement('option'); o.value = p; o.textContent = p; sel.appendChild(o); }
+  if (vstPlugins.includes(keep)) sel.value = keep;
+  $('vstAdd').disabled = !vstAvailable || !vstPlugins.length;
+}
+function applyVstLevels(levels) {
+  [...$('vsts').children].forEach((el, idx) => {
+    const v = levels[idx];
+    if (v === undefined || performance.now() - (lastLocalEdit['vst' + idx] || 0) < 400) return;
+    const f = el.querySelector('.fader');
+    if (Math.abs(parseFloat(f.value) - v) > 0.001) f.value = v;
+  });
+}
+function applyVstMeters(args) {
+  const bar = a => Math.min(100, Math.max(0, (20 * Math.log10(a + 1e-5) + 60) / 60 * 100));
+  [...$('vsts').children].forEach((el, idx) => {
+    const m = el.querySelector('.meter > i');
+    if (m && args[idx] !== undefined) { m.style.width = bar(+args[idx]).toFixed(0) + '%'; m.classList.toggle('hot', +args[idx] > 0.9); }
+  });
+}
+$('vstAdd').onclick = () => {
+  const name = $('vstNewName').value.trim(), plugin = $('vstNewPlugin').value;
+  if (!name) { toast('give the instrument a name — it is what Tidal plays it as'); $('vstNewName').focus(); return; }
+  if (!plugin) return;
+  cmd('/cmd/vstAdd', [name, plugin]);
+  $('vstNewName').value = '';
+};
+$('vstNewName').onkeydown = (e) => { if (e.key === 'Enter') $('vstAdd').click(); };
+$('vstScan').onclick = () => { cmd('/cmd/vstScan', []); toast('scanning plugins…'); };
+
 // ---- settings ----
 // SC owns both the spec and the values. The browser holds no defaults of its own: a
 // dashboard that thinks it knows the config is a dashboard that can disagree with the
@@ -1096,6 +1216,10 @@ es.onmessage = (e) => {
     case '/devicesClear': devices = []; break;
     case '/devicesAdd':  for (let i = 0; i + 2 < a.length; i += 3) devices.push({ name: String(a[i]), ins: +a[i + 1], outs: +a[i + 2] }); break;
     case '/devicesDone': renderDevices(); break;
+    case '/vstInit':     applyVsts(a); break;
+    case '/vstPlugins':  applyVstPlugins(a); break;
+    case '/vstLevels':   applyVstLevels(a); break;
+    case '/vstMeters':   applyVstMeters(a); break;
     case '/state': {
       // [focus, clickOn, clickAmp, dirtLevel, ...trackStates]
       const [focus, clickOn, clickAmp, dirtLevel] = a;

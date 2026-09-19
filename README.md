@@ -28,6 +28,8 @@ TidalCycles (Haskell, code)  ──OSC──►  SuperCollider
 - SuperDirt quark — installed
 - ZOOM H8 as ASIO device @ 44100 Hz
 - TidalCycles + VS Code `vscode-tidalcycles` — **installed in step 6 (not yet)**
+- *(for VST instruments)* the **VSTPlugin** extension in `%LOCALAPPDATA%\SuperCollider\Extensions`
+  and at least one plugin — Surge XT is installed under `D:\vst`. See *VST instruments*.
 
 ## Daily startup
 
@@ -97,6 +99,7 @@ sequence — map it rather than guessing:
 | `devices.scd`  | Lists the audio interfaces (with channel counts) and moves the rig onto one |
 | `looper.scd`   | Multitrack loopers (one per input) + faders + FX |
 | `click.scd`    | Tempo-locked click, right channel |
+| `vst.scd`      | VST instruments hosted in the server, played from Tidal and a MIDI keyboard |
 | `settings.scd` | Config values editable from the dashboard, and written back |
 | `acid.scd`     | sawtooth + supersaw + subkick, and a sidechain ducker |
 | `dashboard.scd`| Streams state to / takes commands from the web dashboard |
@@ -120,6 +123,7 @@ sequence — map it rather than guessing:
 | `test/join-test.scd` | Regression test for loop length + the head fade and tail |
 | `test/layout-test.scd` | Regression test for add / remove / re-wire / rename + saving the layout |
 | `test/devices-test.scd` | Regression test for the device scan and a live server switch |
+| `test/vst-test.scd` | Regression test for VST instruments (needs VSTPlugin + Surge XT) |
 
 ## Roadmap
 
@@ -157,6 +161,11 @@ sequence — map it rather than guessing:
         the layout and the device back into `config.scd`. Perform / Setup views, input
         meters on every strip, a loop play head, keyboard shortcuts. Covered by
         `test/layout-test.scd` and `test/devices-test.scd`.
+- [x] **13. VST instruments** — Surge XT (or any VST2/VST3) hosted inside scsynth via the
+        VSTPlugin extension, played from Tidal (`# s "surge"`) through SuperDirt's own MIDI
+        event type and from a MIDI keyboard, with the plugin's editor a button away. State
+        is snapshotted so it survives `Ctrl+.` and a device switch. Covered by
+        `test/vst-test.scd`. Next: point a looper at an instrument's bus to record it.
 
 ## How loops line up
 
@@ -229,6 +238,7 @@ $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/acid-test.scd        # 40 passed
 & $sc -D d:/livelooper/test/layout-test.scd      # 73 passed
 & $sc -D d:/livelooper/test/devices-test.scd     # 40 passed  (boots its own server twice)
+& $sc -D d:/livelooper/test/vst-test.scd         # 39 passed  (needs VSTPlugin + Surge XT; skips otherwise)
 ```
 
 None of them needs the H8, and **they're safe to run while your rig is booted** — each
@@ -353,6 +363,38 @@ The layout lives in `~trackInputs` / `~trackNames` — the same variables `confi
 sets at boot — so it survives a reload of `looper.scd` and a device switch, and Save
 writes it into the file. `Reload from file` rebuilds the tracks only if the file's layout
 differs from the session's.
+
+## VST instruments
+
+SuperCollider cannot host plugins on its own; the **VSTPlugin** extension
+(https://git.iem.at/pd/vstplugin) adds a UGen that runs a VST2/VST3 plugin inside scsynth's
+audio thread and a controller in sclang for MIDI, parameters, presets and the plugin's
+editor. It lives in `%LOCALAPPDATA%\SuperCollider\Extensions\VSTPlugin` (recompile the class
+library after installing); plugins are found in the standard Windows VST folders plus
+`~vstDirs` — Surge XT's portable build is in `D:\vst`. Without the extension the rig runs
+as before, minus instruments.
+
+An instrument is a name and a plugin: **Setup → Instruments → Add**, or
+`~vstAdd.("surge", "Surge XT.vst3");`. Then, in Tidal:
+
+```haskell
+d1 $ n "0 4 7 <12 9>" # s "surge" # sustain 0.4
+```
+
+That goes through SuperDirt's own MIDI event type — `addMIDI` takes anything with a
+`MIDIOut`-shaped API, and the plugin controller's `.midi` is exactly that — so the notes
+are scheduled on SuperDirt's clock like everything else, and Tidal's MIDI params
+(`midichan`, `ccn`/`ccv`, `nrpn`, `midibend`…) all work. A **MIDI keyboard** is forwarded
+to one instrument, the one marked **MIDI** on the Perform view (channel passed through
+unchanged); **Editor** opens the plugin's own window. Each instrument has a level and a
+meter, and its own stereo bus — the same shape as a track, which is what will let a
+looper record it later.
+
+`Ctrl+.` frees every synth, and with it the plugin instance and whatever you dialled in.
+So an instrument's program data is snapshotted every `~vstSnapshotSecs` (60 s) and put
+back when the `ServerTree` hook rebuilds it; a device switch goes through the same path.
+Those snapshots are also what a saved session will carry. `~vstInstruments` in
+`config.scd` is the boot list, written by Save like the tracks.
 
 ## The dashboard: Perform and Setup
 

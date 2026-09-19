@@ -20,11 +20,11 @@
 // expose input-only and output-only endpoints, so to record through one device and play
 // through another set ~audioDevice = nil and name the two halves separately.
 // All of these are what the dashboard writes when you pick a device and press Save.
-~audioDevice = "ASIO : ZOOM H8 Audio Driver";
-~inDevice    = nil;          // only read when ~audioDevice is nil
-~outDevice   = nil;          // only read when ~audioDevice is nil
+~audioDevice = nil;
+~inDevice    = "Windows WASAPI : Varios micrófonos (Intel® Smart Sound Technology for Digital Microphones)";          // only read when ~audioDevice is nil
+~outDevice   = "Windows WASAPI : Altavoces (Realtek(R) Audio)";          // only read when ~audioDevice is nil
 ~sampleRate  = 44100;        // H8 ASIO requires 44100. nil = whatever the device prefers
-~numInputs   = 12;           // raise if a jack maps past index 11 (tools/input-scan.scd).
+~numInputs   = 1;           // raise if a jack maps past index 11 (tools/input-scan.scd).
                              // Asking for MORE inputs than the device has is safe — the
                              // extra channels are simply silent — so the scan's count is
                              // a floor, not a ceiling.
@@ -52,6 +52,28 @@
 ~sampleBanks = [\bd];
 // A fuller starting point when you want it:
 // ~sampleBanks = [\bd, \sd, \sn, \hh, \hc, \cp, \rm, \jungle, \arpy, \tabla];
+
+
+// ── VST instruments ─────────────────────────────────────────
+// Needs the VSTPlugin extension (in %LOCALAPPDATA%\SuperCollider\Extensions). Without it
+// the rig runs fine, just without instruments — vst.scd says so at boot.
+//
+// Folders to scan for plugins, on top of the standard Windows VST2/VST3 locations. The
+// scan is cached by VSTPlugin, so a boot costs a fraction of a second once it has run.
+~vstDirs = ["D:/vst"];
+// Instruments the rig boots with, as [name, plugin] pairs — the name is what Tidal
+// plays it as (`# s "surge"`) and what the dashboard shows; the plugin is the key the
+// scan gives it ("Surge XT.vst3"). Added from the dashboard's Setup view; Save writes
+// them here like the tracks. A session starts with none unless listed.
+~vstInstruments = [];
+~maxVsts        = 8;         // each one is a plugin instance; Surge XT is light, a big
+                             // sampler is not — the machine's RAM is the real limit
+// Hardware MIDI (a keyboard, the SPD-SX) is forwarded to ONE instrument, chosen on the
+// dashboard. The channel is passed through unchanged.
+~vstMidiIn      = true;
+// Plugin state is snapshotted this often so it survives Ctrl+. (which frees the plugin
+// instance). 0 disables. Session saving will reuse these snapshots.
+~vstSnapshotSecs = 60;
 
 
 // ── Loopers ─────────────────────────────────────────────────

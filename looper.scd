@@ -904,6 +904,7 @@ OSCdef(\trkMeter, { |msg|
     ~metersOn = on and: { rate > 0 };
     ~tracks.do { |t| t[\synth] !? { |x| x.set(\meterRate, rate) } };
     if (~metersOn.not) { ~tracks.do { |t| t[\inAmp] = 0; t[\outAmp] = 0 } };
+    ~setVstMeters !? { ~setVstMeters.(~metersOn) };    // instruments meter on the same subscription
     ~metersOn;
 };
 

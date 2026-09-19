@@ -77,6 +77,28 @@ OSCdef(\cmdRenameTrack, { |msg|
     ~renameTrack !? { ~renameTrack.(msg[1].asInteger, msg[2].asString) };
 }, '/cmd/renameTrack').fix;
 
+// ── VST instruments ─────────────────────────────────────────
+OSCdef(\cmdVstAdd,    { |msg| ~vstAdd !? { ~vstAdd.(msg[1].asString, msg[2].asString) } }, '/cmd/vstAdd').fix;
+OSCdef(\cmdVstRemove, { |msg| ~vstRemove !? { ~vstRemove.(msg[1].asInteger) } }, '/cmd/vstRemove').fix;
+OSCdef(\cmdVstLevel,  { |msg| (~vsts ? [])[msg[1].asInteger] !? { |i| ~vstLevel.(i, msg[2].asFloat) } }, '/cmd/vstLevel').fix;
+OSCdef(\cmdVstEditor, { |msg| ~vstEditor !? { ~vstEditor.(msg[1].asInteger) } }, '/cmd/vstEditor').fix;
+OSCdef(\cmdVstMidi,   { |msg| ~setVstMidiTarget !? { ~setVstMidiTarget.(msg[1].asInteger) } }, '/cmd/vstMidi').fix;
+OSCdef(\cmdVstScan,   { ~vstSearch !? { ~vstSearch.() } }, '/cmd/vstScan').fix;
+
+// The instruments: name, plugin, state per instrument, then which one has the keyboard.
+~sendVsts = {
+    var vsts = ~vsts ? [];
+    ~dash.sendMsg('/vstInit', vsts.size, (~vstMidiTarget ? -1).asInteger,
+        (~vstAvailable ? false).binaryValue,
+        *vsts.collect({ |i| [i[\name].asString, i[\plugin].asString, i[\state].asString] }).flatten);
+};
+~sendVstPlugins = {
+    ~dash.sendMsg('/vstPlugins', *(~vstPlugins ? []).collect(_.asString));
+};
+~sendVstLevels = {
+    ~dash.sendMsg('/vstLevels', *(~vsts ? []).collect({ |i| (i[\level] ? 1.0).asFloat }));
+};
+
 // ── Devices ─────────────────────────────────────────────────
 // scan: async, the list goes out as /devices when it lands.
 // useDevice: in, out, sampleRate (0 = device default), then optional in/out counts.
@@ -128,7 +150,7 @@ OSCdef(\cmdMeters, { |msg|
         (~maxTracks ? 12).asInteger,
         (s.options.inDevice ? "").asString, (s.options.outDevice ? "").asString,
         (if (s.serverRunning) { s.sampleRate ? 0 } { 0 }).asInteger,
-        (~scanning ? false).binaryValue);
+        (~scanning ? false).binaryValue, (~maxVsts ? 8).asInteger);
 };
 
 // The scan result: name, ins, outs per device. Chunked, because Windows lists 20-odd
@@ -186,6 +208,7 @@ OSCdef(\cmdReloadConfig, { |msg|
 OSCdef(\cmdGetTracks, {
     ~sendTracks.(); ~sendState.(); ~sendLevels.(); ~sendFx.(); ~sendCycles.(); ~sendClock.();
     ~sendPins.(); ~sendConfigSpec.(); ~sendConfig.(); ~sendRig.(); ~sendDevices.();
+    ~sendVsts.(); ~sendVstPlugins.(); ~sendVstLevels.();
 }, '/cmd/getTracks').fix;
 
 // ── State TO the dashboard ──────────────────────────────────
@@ -241,6 +264,10 @@ OSCdef(\cmdGetTracks, {
     ~dash.sendMsg('/meters', *(~tracks ? []).collect({ |t|
         [(t[\inAmp] ? 0).asFloat, (t[\outAmp] ? 0).asFloat]
     }).flatten);
+    // instruments on their own address, one value each, only when there are any
+    if ((~vsts ? []).notEmpty) {
+        ~dash.sendMsg('/vstMeters', *~vsts.collect({ |i| (i[\outAmp] ? 0).asFloat }));
+    };
 };
 
 // ~dashGen makes a stale streamer self-terminate if this file is re-evaluated.
@@ -267,6 +294,7 @@ OSCdef(\cmdGetTracks, {
         var tracks, n = -1;
         var lastStates, lastLevels, lastFx, lastCycles;
         var lastPins = nil, pinned, lastLayout = nil, lastBoot = nil, lastScan = nil;
+        var lastVst = nil, lastVstLevels = nil, vstLevels;
         var lastFocus = nil, lastClick = nil, nextClock = 0, nextMeter = 0;
         var changed, moved, driven, rebar, now;
         while({ myGen == ~dashGen }, {
@@ -320,6 +348,12 @@ OSCdef(\cmdGetTracks, {
             if (rebar)  { ~sendCycles.() };
             if (lastBoot != ~bootGen) { lastBoot = ~bootGen; ~sendRig.() };
             if (lastScan != ~scanGen) { lastScan = ~scanGen; ~sendDevices.(); ~sendRig.() };
+            // instruments: the list / a plugin's state / the MIDI target, then levels
+            if (lastVst != ~vstGen) {
+                lastVst = ~vstGen; ~sendVsts.(); ~sendVstPlugins.(); ~sendVstLevels.(); ~sendConfig.();
+            };
+            vstLevels = (~vsts ? []).collect { |i| i[\level] ? 1.0 };
+            if (vstLevels != lastVstLevels) { lastVstLevels = vstLevels; ~sendVstLevels.() };
             if (now >= nextClock) { nextClock = now + clockEvery; ~sendClock.() };
             // meters: stream at ~meterRate while subscribed, and drop the subscription
             // ourselves when the browser stops renewing it
