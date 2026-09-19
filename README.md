@@ -68,9 +68,10 @@ clone the folder anywhere.
 | Added a sample bank to `samples/` | `~reloadSamples.();` |
 | Need a Dirt-Samples bank you trimmed out | `~loadBanks.([\tabla]);` — no restart |
 
-Boot loads the **whole** Dirt-Samples library by default: 219 banks, ~450 MB, ~14 s every
-time. Once you know what a set actually uses, list those banks in `~sampleBanks` — three
-banks is about 5 MB and loads instantly. `~dirt.postSampleInfo;` shows what's loaded.
+`~sampleBanks` lists the Dirt-Samples banks to load at boot — just `[d]` for now, as an
+example. Add banks as the set grows; `nil` loads the whole library (219 banks, ~450 MB,
+~30 s), and since a device switch is a boot too, that cost is paid on every switch.
+`~dirt.postSampleInfo;` shows what is loaded.
 
 The dashboard binds to **localhost only**. It can record, clear and re-level your tracks,
 so it shouldn't be reachable from a venue's WiFi by default. To use it from a tablet on

@@ -40,13 +40,17 @@
                              // so drop this to 4 if you never reach for d5..d8.
 
 // Which Dirt-Samples banks to load at boot.
-//   nil  = the whole library: 219 banks, ~450 MB, ~14 s off every boot.
-//   list = only these. Three banks is about 5 MB — an 88x cut, and near-instant.
+//   nil  = the whole library: 219 banks, ~450 MB, ~30 s off every boot — and off every
+//          device switch, since that is a boot too.
+//   list = only these. One bank is a fraction of a second.
 // Your samples/ folder is loaded on top either way.
 // Left one out mid-set? No restart needed:   ~loadBanks.([\tabla, \arpy]);
 // See what's actually loaded:                ~dirt.postSampleInfo;
-~sampleBanks = nil;
-// Uncomment and edit once you know what your set uses:
+//
+// Just one bank for now, as an example (24 kicks:  d1 $ s "bd*4"). Add to the list as
+// the set grows, or set nil to get everything back.
+~sampleBanks = [\bd];
+// A fuller starting point when you want it:
 // ~sampleBanks = [\bd, \sd, \sn, \hh, \hc, \cp, \rm, \jungle, \arpy, \tabla];
 
 
