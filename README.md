@@ -68,7 +68,7 @@ clone the folder anywhere.
 | Added a sample bank to `samples/` | `~reloadSamples.();` |
 | Need a Dirt-Samples bank you trimmed out | `~loadBanks.([\tabla]);` — no restart |
 
-`~sampleBanks` lists the Dirt-Samples banks to load at boot — just `[d]` for now, as an
+`~sampleBanks` lists the Dirt-Samples banks to load at boot — just `[\bd]` for now, as an
 example. Add banks as the set grows; `nil` loads the whole library (219 banks, ~450 MB,
 ~30 s), and since a device switch is a boot too, that cost is paid on every switch.
 `~dirt.postSampleInfo;` shows what is loaded.
