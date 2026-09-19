@@ -10,7 +10,7 @@
 //  Run it headless (no ZOOM H8 needed):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/vst-test.scd
 //
-//  Expect: "39 passed, 0 failed".
+//  Expect: "41 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, waitFor, inst, node, sandboxNote;
@@ -67,7 +67,7 @@ s.waitForBoot({
         ok.("vstAdd returns the instrument",  inst.notNil and: { inst[\idx] == 0 });
         waitFor.({ inst[\state] == \open }, 20);
         ok.("plugin opens",                   inst[\state] == \open);
-        ok.("controller is loaded",           inst[\ctl].notNil and: { inst[\ctl].loaded });
+        ok.("controller is loaded",           inst[\ctl].notNil and: { inst[\ctl].isOpen });
         ok.("has its own stereo bus",         inst[\bus].notNil and: { inst[\bus].numChannels == 2 });
         ok.("~vstInstruments follows",        ~vstInstruments == [["surge", "Surge XT.vst3"]]);
         ok.("layout marked unsaved",          ~settingsDirty.any { |k| k == \vstInstruments });
@@ -79,6 +79,8 @@ s.waitForBoot({
         ok.("unknown plugin refused",         ~vstAdd.("x", "Nope.vst3").isNil);
         ok.("a sample bank's name refused",   ~vstAdd.("bd", "Surge XT.vst3").isNil);
         ok.("empty name refused",             ~vstAdd.("  ", "Surge XT.vst3").isNil);
+        ok.("a name with a space refused",    ~vstAdd.("surge synth", "Surge XT.vst3").isNil);
+        ok.("punctuation refused",            ~vstAdd.("surge:1", "Surge XT.vst3").isNil);
         ok.("still one instrument",           ~vsts.size == 1);
 
         "".postln; "--- SOUND FROM TIDAL'S EVENT PATH ---".postln;

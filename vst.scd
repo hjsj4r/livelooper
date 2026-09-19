@@ -109,7 +109,7 @@ SynthDef(\vstFader, { |inBus = 0, out = 0, level = 1|
 
 ~freeVst = { |inst|
     inst[\fader] !? { |x| ~vstMeterNodes.removeAt(x.nodeID); x.free };
-    inst[\ctl]   !? { |c| if (c.loaded) { c.close } };
+    inst[\ctl]   !? { |c| if (c.isOpen) { c.close } };
     inst[\synth] !? { |x| x.free };
     inst[\bus]   !? { |x| x.free };
     inst[\synth] = nil; inst[\fader] = nil; inst[\ctl] = nil; inst[\bus] = nil;
@@ -132,9 +132,15 @@ SynthDef(\vstFader, { |inBus = 0, out = 0, level = 1|
     { ~vstPluginKnown.(plugin).not } {
         ("vstAdd refused — no plugin " ++ plugin.asString.asCompileString
             ++ " in the scan (" ++ ~vstPlugins.join(", ") ++ ")").warn; nil }
-    { nm.isEmpty or: { ~vsts.any { |x| x[\name] == nm } } or: { ~dirt.buffers[nm.asSymbol].notNil } } {
+    // The name is a Tidal sound name: `# s "surge"`. A space would read as two sounds in
+    // mini-notation and punctuation has meanings there (`:` picks a sample, `~` rests),
+    // so only letters, digits and underscore.
+    { nm.isEmpty or: { nm.any { |c| c.isAlphaNum.not and: { c != $_ } } } } {
+        ("vstAdd refused — " ++ nm.asCompileString
+            ++ " is not a Tidal sound name: use letters, digits and _ (e.g. \"surge_synth\")").warn; nil }
+    { ~vsts.any { |x| x[\name] == nm } or: { ~dirt.buffers[nm.asSymbol].notNil } } {
         ("vstAdd refused — the name " ++ nm.asCompileString
-            ++ " is empty, taken, or already a sample bank").warn; nil }
+            ++ " is already an instrument or a sample bank").warn; nil }
     {
         inst = ~newVst.(nm, plugin, ~vsts.size);
         inst[\bus] = Bus.audio(s, 2);
@@ -178,7 +184,7 @@ SynthDef(\vstFader, { |inBus = 0, out = 0, level = 1|
 // dashboard — the button there just asks for it.
 ~vstEditor = { |i, show = true|
     var inst = ~vsts[i.asInteger];
-    if (inst.isNil or: { inst[\ctl].isNil } or: { inst[\ctl].loaded.not }) {
+    if (inst.isNil or: { inst[\ctl].isNil } or: { inst[\ctl].isOpen.not }) {
         ("vstEditor: instrument " ++ i ++ " is not open").warn; false;
     } {
         inst[\ctl].editor(show); true;
@@ -202,7 +208,7 @@ if (~vstMidiIn ? true) {
     };
     ~vstMidi = { |cmd ...args|
         ~vstMidiTarget !? { |i|
-            ~vsts[i] !? { |inst| inst[\ctl] !? { |c| if (c.loaded) { c.midi.performList(cmd, args) } } };
+            ~vsts[i] !? { |inst| inst[\ctl] !? { |c| if (c.isOpen) { c.midi.performList(cmd, args) } } };
         };
     };
     MIDIdef.noteOn (\vstNoteOn,  { |vel, num, chan| ~vstMidi.(\noteOn,  chan, num, vel) }).fix;
@@ -227,7 +233,7 @@ OSCdef(\vstMeter, { |msg|
 
 // ── Snapshots: what survives a panic ────────────────────────
 ~vstSnapshot = { |inst|
-    inst[\ctl] !? { |c| if (c.loaded) { c.getProgramData({ |d| inst[\data] = d }) } };
+    inst[\ctl] !? { |c| if (c.isOpen) { c.getProgramData({ |d| inst[\data] = d }) } };
 };
 ~vstSnapshotAll = { ~vsts.do { |inst| ~vstSnapshot.(inst) } };
 ~startVstSnapshots !? { CmdPeriod.remove(~startVstSnapshots) };
