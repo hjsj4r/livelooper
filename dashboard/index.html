@@ -301,6 +301,16 @@
           <option value="88200">88200</option>
           <option value="96000">96000</option>
         </select>
+        <span class="k">buffer size</span>
+        <div class="ins"><select id="devBuf">
+          <option value="0">driver default</option>
+          <option value="64">64</option>
+          <option value="128">128</option>
+          <option value="256">256</option>
+          <option value="512">512</option>
+          <option value="1024">1024</option>
+        </select>
+          <span class="dim" style="margin-left:8px">samples. The latency knob for anything played live. ASIO honours it; Windows shared-mode drivers ignore it.</span></div>
         <span class="k">input channels</span>
         <div class="ins"><input type="number" id="devIns" min="1" max="128" style="width:90px">
           <span class="dim" style="margin-left:8px">jacks the tracks can choose from. More than the device has is safe (silent).</span></div>
@@ -865,10 +875,11 @@ let rig = { state: 'off', msg: '', inDev: '', outDev: '', rate: 0, ins: 0, outs:
 let devices = [];
 let devTouched = false;    // once you have edited the device form, /rig stops overwriting it
 function applyRig(args) {
-  const [state, msg, inDev, outDev, rate, ins, outs, maxTracks, runIn, runOut, runRate, scanning, maxVsts] = args;
+  const [state, msg, inDev, outDev, rate, ins, outs, maxTracks, runIn, runOut, runRate, scanning, maxVsts, bufSize, runBuf] = args;
   const wasIns = rig.ins;
   rig = { state, msg, inDev, outDev, rate: +rate, ins: +ins, outs: +outs, maxTracks: +maxTracks,
-          runIn, runOut, runRate: +runRate, scanning: +scanning, maxVsts: +maxVsts || 8 };
+          runIn, runOut, runRate: +runRate, scanning: +scanning, maxVsts: +maxVsts || 8,
+          bufSize: +bufSize || 0, runBuf: +runBuf || 0 };
   const pill = $('rigPill');
   pill.className = 'pill ' + state;
   pill.textContent = { ready: 'SC: ready', booting: 'SC: ' + (msg || 'booting…'), failed: 'SC: ' + (msg || 'failed'),
@@ -890,6 +901,7 @@ function applyRig(args) {
     `running on <b>${esc(rig.runIn || 'system default')}</b>` +
     (rig.runOut !== rig.runIn ? ` → <b>${esc(rig.runOut || 'system default')}</b>` : '') +
     (rig.runRate ? ` @ <b>${rig.runRate} Hz</b>` : '') +
+    (rig.runBuf ? ` · buffer <b>${rig.runBuf}</b>` : ' · buffer <b>driver default</b>') +
     (state === 'ready' ? '' : ` <span class="warn">(${esc(state)})</span>`) +
     (same ? '' : `<br>config says <b>${esc(rig.inDev || 'system default')}</b>` +
       (rig.outDev !== rig.inDev ? ` → <b>${esc(rig.outDev || 'system default')}</b>` : '') +
@@ -902,6 +914,7 @@ function fillDeviceForm() {
   $('devRate').value = String([44100, 48000, 88200, 96000].includes(rig.rate) ? rig.rate : 0);
   $('devIns').value = rig.ins || '';
   $('devOuts').value = rig.outs || '';
+  $('devBuf').value = String([64, 128, 256, 512, 1024].includes(rig.bufSize) ? rig.bufSize : 0);
 }
 // a device that is configured but not (yet) scanned still needs to show in the menu
 function setSelectValue(sel, value) {
@@ -961,14 +974,15 @@ $('devOut').onchange = () => {
   if (d) $('devOuts').value = Math.max(2, d.outs);
   markDevRows();
 };
-['devRate', 'devIns', 'devOuts'].forEach(id => $(id).oninput = () => { devTouched = true; });
+['devRate', 'devBuf', 'devIns', 'devOuts'].forEach(id => $(id).oninput = () => { devTouched = true; });
 $('scanBtn').onclick = () => { cmd('/cmd/scanDevices', []); $('scanBtn').disabled = true; $('scanBtn').textContent = 'Scanning…'; };
 $('applyDev').onclick = () => {
   const busy = trackStates.some(s => s && s !== 'idle');
   if (busy && !confirm('Tracks are playing or recording. Switching the device restarts the server and loses every loop (the layout is kept). Continue?')) return;
   const inDev = $('devIn').value, outDev = $('devOut').value;
   const ins = parseInt($('devIns').value, 10) || 0, outs = parseInt($('devOuts').value, 10) || 0;
-  cmd('/cmd/useDevice', [inDev, outDev, parseInt($('devRate').value, 10) || 0, ins, outs]);
+  cmd('/cmd/useDevice', [inDev, outDev, parseInt($('devRate').value, 10) || 0, ins, outs,
+                          parseInt($('devBuf').value, 10) || 0]);
   devTouched = false;
   toast('switching device…', 2500);
 };

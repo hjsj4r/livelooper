@@ -9,7 +9,7 @@
 //  Run it headless (no ZOOM H8 needed — it boots the system default device):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/devices-test.scd
 //
-//  Expect: "40 passed, 0 failed".
+//  Expect: "42 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, canned, devs, scanned = nil, t0, rigs = 0, lastRig, dirtPlays;
@@ -101,13 +101,15 @@ fork {
 
     "".postln; "--- SWITCH WHILE RUNNING: QUIT + BOOT ---".postln;
     ~tracks[0][\level] = 0.42;               // runtime state that should be rebuilt fresh
-    ~useDevice.(nil, nil, 0, 4, 2);          // same device, explicit counts
+    ~useDevice.(nil, nil, 0, 4, 2, 128);     // same device, explicit counts + buffer
     0.5.wait;
     ok.("goes through booting",            ~bootState == \booting or: { ~bootState == \ready });
     waitFor.({ ~bootState == \ready and: { s.serverRunning } }, 60);
     waitFor.({ ~tracks.size == 2 and: { ~tracks.every { |t| t[\synth].notNil } } }, 20);
     ok.("back up after the switch",        ~bootState == \ready and: { s.serverRunning });
     ok.("channel counts applied",          s.options.numInputBusChannels == 4);
+    ok.("buffer size applied",             ~hardwareBufferSize == 128 and: { s.options.hardwareBufferSize == 128 });
+    ok.("...and marked unsaved",           ~settingsDirty.any { |k| k == \hardwareBufferSize });
     ok.("tracks rebuilt",                  ~tracks.size == 2 and: { ~tracks.every { |t| t[\buf].notNil } });
     ok.("still exactly one Tidal responder (old SuperDirt freed)", dirtPlays.() == 1);
     ok.("click scheduler alive",           ~clickTask.notNil and: { ~clickTask.isPlaying });

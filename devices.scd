@@ -121,6 +121,7 @@
     s.options.numOutputBusChannels = ~numOutputs;
     s.options.numBuffers           = ~numBuffers;
     s.options.memSize              = ~memSize;
+    s.options.hardwareBufferSize   = ~hardwareBufferSize;
 };
 
 // Is this name absent from what the OS offers? nil (system default) is always present.
@@ -184,7 +185,7 @@
 //
 // The choice goes into the config variables first and is marked unsaved, exactly like a
 // settings slider: Save writes it to config.scd, a restart without saving forgets it.
-~useDevice = { |inName, outName, rate, ins, outs|
+~useDevice = { |inName, outName, rate, ins, outs, bufSize|
     var inDev  = if (inName.isNil or: { inName.asString.isEmpty }) { nil } { inName.asString };
     var outDev = if (outName.isNil or: { outName.asString.isEmpty }) { inDev } { outName.asString };
     var info   = { |n| ~devices.detect { |d| d[\name] == n } };
@@ -204,11 +205,13 @@
             ~audioDevice = nil; ~inDevice = inDev; ~outDevice = outDev;
         };
         ~sampleRate = if (rate.isNil or: { rate.asInteger <= 0 }) { nil } { rate.asInteger };
+        // 0 / nil = the driver decides; anything else must be a power of two the driver can do
+        bufSize !? { ~hardwareBufferSize = if (bufSize.asInteger <= 0) { nil } { bufSize.asInteger } };
         ~numInputs  = (ins  ? (info.(inDev)  !? { |d| d[\ins]  }) ? ~numInputs).asInteger.max(1);
         ~numOutputs = (outs ? (info.(outDev) !? { |d| d[\outs] }) ? ~numOutputs).asInteger.max(2);
         ~settingsMarkDirty !? {
-            [\audioDevice, \inDevice, \outDevice, \sampleRate, \numInputs, \numOutputs]
-                .do { |k| ~settingsMarkDirty.(k) };
+            [\audioDevice, \inDevice, \outDevice, \sampleRate, \numInputs, \numOutputs,
+                \hardwareBufferSize].do { |k| ~settingsMarkDirty.(k) };
         };
         ("devices: switching to in " ++ (inDev ? "default").asCompileString
             ++ " / out " ++ (outDev ? "default").asCompileString

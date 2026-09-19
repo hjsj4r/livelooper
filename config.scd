@@ -29,6 +29,12 @@
                              // extra channels are simply silent — so the scan's count is
                              // a floor, not a ceiling.
 ~numOutputs  = 2;            // H8 has only 2 physical outs (L = music, R = click hack)
+// Hardware buffer, in samples: THE latency knob for anything played live — a MIDI
+// keyboard into a VST, the guitar monitored through SC. nil = the driver's own setting.
+// ASIO honours it (the H8: 128 ≈ 3 ms at 44100, try 64 if it stays clean); Windows'
+// shared-mode drivers (WASAPI, MME, DirectSound) ignore it — the laptop's built-in audio
+// is ~23 ms out whatever you ask. Dropouts = too small for this machine, go up a step.
+~hardwareBufferSize = nil;
 ~scanPort    = 57199;        // spare UDP port for the throwaway scsynth the device scan runs
 ~numBuffers  = 1024 * 16;
 ~memSize     = 8192 * 16;    // server real-time memory, KB

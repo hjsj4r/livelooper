@@ -237,7 +237,7 @@ $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/select-test.scd      # 65 passed
 & $sc -D d:/livelooper/test/acid-test.scd        # 40 passed
 & $sc -D d:/livelooper/test/layout-test.scd      # 73 passed
-& $sc -D d:/livelooper/test/devices-test.scd     # 40 passed  (boots its own server twice)
+& $sc -D d:/livelooper/test/devices-test.scd     # 42 passed  (boots its own server twice)
 & $sc -D d:/livelooper/test/vst-test.scd         # 41 passed  (needs VSTPlugin + Surge XT; skips otherwise)
 ```
 
@@ -395,6 +395,26 @@ So an instrument's program data is snapshotted every `~vstSnapshotSecs` (60 s) a
 back when the `ServerTree` hook rebuilds it; a device switch goes through the same path.
 Those snapshots are also what a saved session will carry. `~vstInstruments` in
 `config.scd` is the boot list, written by Save like the tracks.
+
+### Playing a VST live: where the delay is
+
+The keyboard path is deliberately the shortest one there is — MIDI in → sclang → an
+untimestamped `/u_cmd` to the plugin → audio. Measured on this machine: **4.5–8 ms** from
+note-on in sclang to sound on the instrument's bus. Everything else is the audio device:
+
+| Device | PortAudio's own figure | Honours a buffer request? |
+|---|---|---|
+| ZOOM H8, ASIO | set by the buffer size (128 ≈ 3 ms at 44.1 k) | yes |
+| laptop audio, WASAPI | 22 ms in / 23 ms out, plus the engine's 10 ms | **no** — shared mode |
+| laptop audio, DirectSound | 121 ms out | no |
+| laptop audio, MME | 100 ms+ | no |
+
+So a "considerable" delay on the laptop's own audio is the laptop, not the rig. For live
+playing use the H8 and set the **buffer size** in the device panel (`~hardwareBufferSize`,
+saved with the device) as low as it runs clean — 128, then 64. Turning off the Realtek
+"audio enhancements" in Windows sound settings helps the laptop case somewhat. Nothing here
+is compensated: unlike a loop, a live instrument is heard directly, so the only strategy is
+to make the path short. Tidal → VST is unaffected either way (scheduled on the grid).
 
 ## The dashboard: Perform and Setup
 

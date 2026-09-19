@@ -110,7 +110,8 @@ OSCdef(\cmdUseDevice, { |msg|
         ~useDevice.(str.(msg[1]), str.(msg[2]),
             if (msg.size > 3) { msg[3].asInteger } { nil },
             if (msg.size > 4) { msg[4].asInteger } { nil },
-            if (msg.size > 5) { msg[5].asInteger } { nil });
+            if (msg.size > 5) { msg[5].asInteger } { nil },
+            if (msg.size > 6) { msg[6].asInteger } { nil });
         ~sendConfig.();
     };
 }, '/cmd/useDevice').fix;
@@ -150,7 +151,8 @@ OSCdef(\cmdMeters, { |msg|
         (~maxTracks ? 12).asInteger,
         (s.options.inDevice ? "").asString, (s.options.outDevice ? "").asString,
         (if (s.serverRunning) { s.sampleRate ? 0 } { 0 }).asInteger,
-        (~scanning ? false).binaryValue, (~maxVsts ? 8).asInteger);
+        (~scanning ? false).binaryValue, (~maxVsts ? 8).asInteger,
+        (~hardwareBufferSize ? 0).asInteger, (s.options.hardwareBufferSize ? 0).asInteger);
 };
 
 // The scan result: name, ins, outs per device. Chunked, because Windows lists 20-odd
