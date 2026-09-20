@@ -8,10 +8,10 @@
 //  Run it headless (no ZOOM H8 needed):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/layout-test.scd
 //
-//  Expect: "73 passed, 0 failed".
+//  Expect: "80 passed, 0 failed".
 // ============================================================
 (
-var pass = 0, fail = 0, ok, t, a, b, sandbox, text, lines, nodeBefore, lastInit, inits = 0;
+var pass = 0, fail = 0, ok, t, a, b, sandbox, text, lines, nodeBefore, lastInit, inits = 0, n0;
 var settled;
 
 ok = { |label, cond|
@@ -118,7 +118,9 @@ s.waitForBoot({
         ~gotIn = nil;
         t[\synth].get(\inChan, { |v| ~gotIn = v });
         0.4.wait;
-        ok.("the synth reads the new jack",   ~gotIn.notNil and: { ~gotIn.round == 8 });
+        // the synth is set to the ABSOLUTE bus, which for a jack is NumOutputBuses + it
+        ok.("the synth reads the new jack",   ~gotIn.notNil
+            and: { ~gotIn.round == (8 + s.options.numOutputBusChannels) });
         ok.("same input is a no-op",          ~setTrackInput.(0, 8) === t and: { t[\synth].nodeID == nodeBefore });
         ok.("bad input refused",              ~setTrackInput.(0, 99).isNil and: { t[\inputs] == [8] });
 
@@ -181,6 +183,30 @@ s.waitForBoot({
         ~removeTrack.(1);
         ok.("focus clipped into range",       ~focus == 1 and: { ~navIsTrack.(1).not });   // = tidal level
         ok.("one track left",                 ~tracks.size == 1);
+
+        "".postln; "--- THE DASHBOARD'S COMMANDS ---".postln;
+        // The page sends the source as ONE string — "5", "0+1", "vst:piano" — so it can
+        // never be confused with the track's name, which is also a string. Exercise the
+        // parsing through the real OSC handlers rather than the language API.
+        ok.("spec parses a jack",             ~parseSpec.("5") == [5]);
+        ok.("spec parses a pair",             ~parseSpec.("4+7") == [4, 7]);
+        ok.("spec passes an instrument through", ~parseSpec.("vst:piano") == "vst:piano");
+        n0 = ~tracks.size;
+        NetAddr.localAddr.sendMsg('/cmd/addTrack', "4+7", "from the page");
+        0.5.wait; settled.();
+        ok.("addTrack over OSC adds a pair",  ~tracks.size == (n0 + 1)
+            and: { ~tracks.last[\inputs] == [4, 7] }
+            and: { ~tracks.last[\name] == "from the page" });
+        NetAddr.localAddr.sendMsg('/cmd/setTrackInput', ~tracks.size - 1, "vst:nothere");
+        0.5.wait; settled.();
+        ok.("setTrackInput over OSC takes an instrument",
+            ~tracks.last[\source] == \vst and: { ~tracks.last[\vstName] == "nothere" });
+        // ...and an instrument that does not exist reads the silent bus, never bus 0 —
+        // which is the master, and would record the whole mix including itself.
+        ok.("an unresolved instrument reads silence, not the master",
+            ~trackSourceBuses.(~tracks.last) == [~silentBus.index, ~silentBus.index + 1]);
+        ok.("...and is saved as vst:nothere", ~trackInputs.last == "vst:nothere");
+        ~removeTrack.(~tracks.size - 1);
 
         "".postln; "--- SAVE: THE LAYOUT GOES TO CONFIG.SCD ---".postln;
         ok.("pairs print bare",   ~settingsValueString.([[0, 1], 5, 9]) == "[[0, 1], 5, 9]");

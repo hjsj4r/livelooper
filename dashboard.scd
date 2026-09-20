@@ -63,15 +63,17 @@ OSCdef(\cmdDirtLevel, { |msg|
 // ── Layout: add / remove / re-wire / rename ─────────────────
 // Inputs arrive as one or two integers; a name as a string. Each action bumps
 // ~layoutGen in looper.scd, which is what makes the task below resend /tracksInit.
+// The source is one STRING — "5", "0+1" or "vst:piano" — so it cannot be confused with
+// the track's name, which is also a string and used to be told apart by position only.
 OSCdef(\cmdAddTrack, { |msg|
-    var ins = msg[1..].select(_.isNumber).collect(_.asInteger);
-    var name = msg[1..].detect { |x| x.isString or: { x.isKindOf(Symbol) } };
-    ~addTrack !? { ~addTrack.(ins, name !? { name.asString }) };
+    var spec = ~parseSpec !? { ~parseSpec.(msg[1]) };
+    var name = if (msg.size > 2) { msg[2].asString } { nil };
+    ~addTrack !? { ~addTrack.(spec, name) };
 }, '/cmd/addTrack').fix;
 OSCdef(\cmdRemoveTrack, { |msg| ~removeTrack !? { ~removeTrack.(msg[1].asInteger) } },
     '/cmd/removeTrack').fix;
 OSCdef(\cmdSetTrackInput, { |msg|
-    ~setTrackInput !? { ~setTrackInput.(msg[1].asInteger, msg[2..].collect(_.asInteger)) };
+    ~setTrackInput !? { ~setTrackInput.(msg[1].asInteger, ~parseSpec.(msg[2])) };
 }, '/cmd/setTrackInput').fix;
 OSCdef(\cmdRenameTrack, { |msg|
     ~renameTrack !? { ~renameTrack.(msg[1].asInteger, msg[2].asString) };
@@ -158,7 +160,7 @@ OSCdef(\cmdMeters, { |msg|
 ~sendTracks = {
     var tracks = ~tracks ? [];
     ~dash.sendMsg('/tracksInit', tracks.size,
-        *tracks.collect({ |t| [t[\name].asString, ~inLabel.(t).asString] }).flatten);
+        *tracks.collect({ |t| [t[\name].asString, ~trackSpecString.(t).asString] }).flatten);
 };
 
 // The rig itself: boot state, the devices it is configured for, and the limits the

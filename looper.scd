@@ -5,6 +5,7 @@
 //  Controlled from the dashboard and the DualSense; both act on the SELECTED track.
 //  Tracks can be added, removed, re-wired and renamed while the rig runs:
 //      ~addTrack.(5, "bass");   ~addTrack.([0, 1], "mic");
+//      ~addTrack.("vst:piano", "keys");   // loop a VST instrument, same as any input
 //      ~setTrackInput.(2, 7);   ~renameTrack.(2, "synth");   ~removeTrack.(2);
 // ============================================================
 
@@ -101,6 +102,10 @@
     // a track to another jack is a .set — no rebuild, no dropout, the loop keeps playing.
     // Only the channel COUNT is baked in (BufRd/BufWr widths), which is why mono<->stereo
     // still means a new synth and a new buffer.
+    // ABSOLUTE bus indices, not jack numbers. A hardware jack is just the bus at
+    // NumOutputBuses + jack (which is all SoundIn does), so reading In.ar here lets a
+    // track be fed by anything that writes to a bus — a jack, or a VST instrument's
+    // private output. One code path, no switch: see ~trackSourceBuses.
     var inChans  = if (nch >= 2) { [\inChanL.kr(0), \inChanR.kr(1)] } { \inChan.kr(0) };
     var bufnum   = \bufnum.kr(0);
     var recLevel = \recLevel.kr(0), preLevel = \preLevel.kr(1);
@@ -111,7 +116,7 @@
     var hf       = \headFrames.kr(0);
     var tf       = \tailFrames.kr(0);
     var tailCur  = \tailCurve.kr(0.5);
-    var dry      = SoundIn.ar(inChans);
+    var dry      = In.ar(inChans);
     var phase    = Phasor.ar(K2A.ar(reset), BufRateScale.kr(bufnum), 0, frames, resetPos);
     // samples since this take began — places the overlap tail
     var n        = Sweep.ar(K2A.ar(reset), SampleRate.ir);
@@ -215,12 +220,73 @@ SynthDef(\trackFx, { |inBus = 0, out = 0, level = 1|
 //
 // inputs is ALWAYS a list, so mono and stereo tracks have the same shape everywhere
 // downstream; only the SynthDef and the buffer's channel count differ.
+// A track's SOURCE is either hardware jacks or a VST instrument:
+//     5          jack 5, mono
+//     [0, 1]     jacks 0 and 1, stereo
+//     "vst:piano"  the instrument called piano — always stereo, since its bus is
+// The string form is what config.scd stores and what the dashboard sends, so there is
+// one spelling of a source everywhere.
+~vstSpecPrefix = "vst:";
+~specIsVst = { |spec| spec.isString and: { spec.beginsWith(~vstSpecPrefix) } };
+~specVstName = { |spec| spec.asString[~vstSpecPrefix.size ..] };
+
 ~newTrack = { |spec, name, i|
+    var isVst = ~specIsVst.(spec);
     (idx: i, name: (name ?? { "Track " ++ i }).asString,
-        inputs: spec.asArray, state: \idle, buf: nil, synth: nil,
+        // A VST track is stereo: two entries, so every "how many channels" question
+        // downstream is answered the same way as for a jack pair.
+        inputs: if (isVst) { [0, 1] } { spec.asArray },
+        source: if (isVst) { \vst } { \input },
+        vstName: if (isVst) { ~specVstName.(spec) } { nil },
+        state: \idle, buf: nil, synth: nil,
         fxBus: nil, fxSynth: nil, fx: 0.0, cycles: (~numLoopCycles ? 4),
         gen: 0, level: 1.0, startCycle: 0)
 };
+
+// How a track is written back to config.scd: an index, a pair, or "vst:name".
+~trackSpec = { |t|
+    if (t[\source] == \vst) { ~vstSpecPrefix ++ t[\vstName] }
+        { if (t[\inputs].size >= 2) { t[\inputs].copy } { t[\inputs][0] } };
+};
+
+// The same thing as ONE string, which is how it travels over OSC: "5", "0+1",
+// "vst:piano". The dashboard renders it for display and sends it straight back, so
+// there is no second spelling to keep in step.
+~trackSpecString = { |t|
+    if (t[\source] == \vst) { ~vstSpecPrefix ++ t[\vstName] } { t[\inputs].join("+") };
+};
+~parseSpec = { |str|
+    var s2 = str.asString.stripWhiteSpace;
+    if (~specIsVst.(s2)) { s2 } { s2.split($+).collect { |x| x.asInteger } };
+};
+
+// The ABSOLUTE buses a track reads, which is what its synth is set to.
+//
+// A jack is NumOutputBuses + its index. An instrument is its own private stereo bus —
+// PRE-fader, so what you record is the instrument itself and moving its level afterwards
+// cannot change the take.
+//
+// An instrument that is not open yet (the plugin scan is async, and a track can be bound
+// to one that was removed) reads ~silentBus instead. That bus matters: the obvious
+// fallback, bus 0, is the main output, so a track would record the entire mix including
+// its own playback — a feedback loop on the first press of record.
+~silentBus = ~silentBus ? nil;
+~trackSourceBuses = { |t|
+    var n = s.options.numOutputBusChannels ? 2;
+    if (t[\source] == \vst) {
+        var inst = (~vsts ? []).detect { |x| x[\name] == t[\vstName] };
+        var bus  = inst !? { |x| x[\bus] };
+        if (bus.notNil) { [bus.index, bus.index + 1] }
+            { (~silentBus !? { |b| [b.index, b.index + 1] }) ?? { [0, 1] } };
+    } {
+        t[\inputs].collect { |j| n + j };
+    };
+};
+
+// A VST track must not monitor its input: you are already hearing the instrument through
+// its own fader, so monitoring it here would play it twice — and adding a track would
+// make the instrument jump in level for no visible reason.
+~trackMonLevel = { |t| if (t[\source] == \vst) { 0 } { ~monLevel } };
 // Something the dashboard can watch: bumped whenever the set of strips changes shape,
 // so it rebuilds them exactly then and never polls names.
 ~layoutGen = ~layoutGen ? 0;
@@ -231,7 +297,11 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
 };
 
 // ── Per-track actions ───────────────────────────────────────
-~inLabel = { |t| t[\inputs].join("+") };
+// What feeds this track, for the post window and the dashboard strip: "5", "0+1", or
+// "♪ piano" for an instrument.
+~inLabel = { |t|
+    if (t[\source] == \vst) { "♪ " ++ t[\vstName] } { "in " ++ t[\inputs].join("+") };
+};
 // Name rather than input index: "[t4 spdsx]" says far more at a glance mid-set than
 // "[t4 in8]". The index stays because it is how you reach the track from the
 // interpreter (~tracks[4]).
@@ -645,18 +715,43 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
 ~meterNodes = ~meterNodes ? IdentityDictionary.new;
 ~metersOn   = ~metersOn ? false;
 
+// ── Order of execution ──────────────────────────────────────
+// scsynth ZEROES every audio bus at the start of each control block, so a synth that
+// reads a bus before its writer has run that block reads silence — not late audio,
+// silence. A looper recording a VST instrument is exactly that situation, and relying on
+// creation order would make it depend on whether the track or the instrument was added
+// first. Two groups settle it for good:
+//
+//     ~srcGroup   instruments write here          (head)
+//     ~loopGroup  loopers read and record here    (after ~srcGroup)
+//     FX          addToTail, so after both
+//
+// Both are rebuilt by the ServerTree hook, because Ctrl+. frees groups along with
+// everything else.
+~buildGroups = {
+    ~srcGroup  = Group.new(s, \addToHead);
+    ~loopGroup = Group.after(~srcGroup);
+};
+// Whoever needs them first makes them: ~addTrack and ~vstAdd can both run long after the
+// boot, and a group freed by a panic is remade by the hook below in either order.
+~ensureGroups = {
+    if (~srcGroup.isNil or: { ~loopGroup.isNil }) { ~buildGroups.() };
+    [~srcGroup, ~loopGroup];
+};
+
 ~buildTrackSynth = { |t|
-    var ins  = t[\inputs];
+    var buses = ~trackSourceBuses.(t);
     var args = [bufnum: t[\buf], loopFrames: t[\loopFrames],
         headFrames: (t[\headFrames] ? 0), tailFrames: (t[\tailFrames] ? 0),
         tailCurve: (~tailCurve ? 0.5), recLevel: 0,
-        preLevel: 1, monLevel: ~monLevel, recRun: 0, playing: 0,
+        preLevel: 1, monLevel: ~trackMonLevel.(t), recRun: 0, playing: 0,
         level: t[\level], outBus: t[\fxBus],
         meterRate: if (~metersOn) { ~meterRate ? 0 } { 0 }];
-    t[\synth] = if (ins.size >= 2) {
-        Synth(\looperStereo, args ++ [inChanL: ins[0], inChanR: ins[1]]);
+    ~ensureGroups.();
+    t[\synth] = if (buses.size >= 2) {
+        Synth(\looperStereo, args ++ [inChanL: buses[0], inChanR: buses[1]], ~loopGroup);
     } {
-        Synth(\looperMono, args ++ [inChan: ins[0]]);
+        Synth(\looperMono, args ++ [inChan: buses[0]], ~loopGroup);
     };
     ~meterNodes[t[\synth].nodeID] = t;
     // addToTail so the FX always runs after every looper. Order among the FX synths
@@ -700,6 +795,7 @@ if (~trackNames.notNil and: { ~trackNames.size != ~trackInputs.size }) {
     var silent = ~tracks.collect { |t|
         #[\stopped, \stopping].includes(t[\state]) and: { t[\buf].notNil }
     };
+    ~buildGroups.();          // groups die with the node tree; remake them before the synths
     ~meterNodes.clear;
     ~tracks.do { |t|
         t[\state] = \idle;
@@ -720,6 +816,8 @@ ServerTree.add(~buildTracks, s);
 ~forgetTracks !? { ServerQuit.remove(~forgetTracks, s) };
 ~forgetTracks = {
     ~meterNodes.clear;
+    ~silentBus = nil;
+    ~srcGroup = nil; ~loopGroup = nil;   // groups and bus indices die with the server
     ~tracks.do { |t|
         t[\buf] = nil; t[\synth] = nil; t[\state] = \idle;
         t[\fxBus] = nil; t[\fxSynth] = nil;
@@ -732,7 +830,7 @@ ServerQuit.add(~forgetTracks, s);
 // All of these keep ~trackInputs / ~trackNames in step with ~tracks and mark them
 // unsaved, so Save writes the layout you built and a reload of this file rebuilds it.
 ~syncLayoutVars = {
-    ~trackInputs = ~tracks.collect { |t| if (t[\inputs].size >= 2) { t[\inputs].copy } { t[\inputs][0] } };
+    ~trackInputs = ~tracks.collect { |t| ~trackSpec.(t) };
     ~trackNames  = ~tracks.collect { |t| t[\name] };
     ~settingsMarkDirty !? { ~settingsMarkDirty.(\trackInputs); ~settingsMarkDirty.(\trackNames) };
     ~layoutGen = ~layoutGen + 1;
@@ -740,26 +838,42 @@ ServerQuit.add(~forgetTracks, s);
 
 // A jack must exist on the server as configured. Requesting inputs past what the device
 // physically has is allowed by scsynth (they are silent), so ~numInputs is the ceiling.
-~inputsValid = { |inputs|
+// A "vst:name" source is valid whether or not that instrument is loaded yet: the plugin
+// scan is async, and a layout saved with an instrument must survive a boot that has not
+// opened it yet — an unresolved one reads silence until it appears.
+~inputsValid = { |spec|
     var n = s.options.numInputBusChannels ? ~numInputs ? 2;
-    var a = inputs.asArray;
-    (a.size >= 1) and: { a.size <= 2 } and: {
-        a.every { |i| i.isNumber and: { i >= 0 } and: { i < n } }
+    var a;
+    if (~specIsVst.(spec)) {
+        ~specVstName.(spec).isEmpty.not;
+    } {
+        a = spec.asArray;
+        (a.size >= 1) and: { a.size <= 2 } and: {
+            a.every { |i| i.isNumber and: { i >= 0 } and: { i < n } }
+        };
     };
 };
 
-// Append a track fed by `inputs` (an index, or a pair for stereo). Async: the buffer has
-// to exist before the synth reads it, so the strip appears after one server round trip.
-// Returns the new track record straight away, its \synth filled in shortly after.
-~addTrack = { |inputs, name|
-    var ins = inputs.asArray.collect(_.asInteger), t, cap = ~maxTracks ? 12;
+// What a source spec looks like when something rejects it.
+~specLabel = { |spec|
+    if (~specIsVst.(spec)) { "instrument " ++ ~specVstName.(spec).asCompileString }
+        { "inputs " ++ spec.asArray.asString };
+};
+
+// Append a track fed by `spec`: a jack index, a pair, or "vst:name". Async: the buffer
+// has to exist before the synth reads it, so the strip appears after one server round
+// trip. Returns the new track record straight away, its \synth filled in shortly after.
+~addTrack = { |spec, name|
+    var ins = if (~specIsVst.(spec)) { spec } { spec.asArray.collect(_.asInteger) };
+    var t, cap = ~maxTracks ? 12;
     case
     { ~tracks.size >= cap } {
         ("addTrack refused — ~maxTracks is " ++ cap ++ " (config.scd)").warn; nil;
     }
     { ~inputsValid.(ins).not } {
-        ("addTrack refused — inputs " ++ ins ++ " must be 1 or 2 indices in 0.."
-            ++ ((s.options.numInputBusChannels ? ~numInputs) - 1)).warn; nil;
+        ("addTrack refused — " ++ ~specLabel.(ins) ++ ": jacks must be 1 or 2 indices in 0.."
+            ++ ((s.options.numInputBusChannels ? ~numInputs) - 1)
+            ++ ", or \"vst:<instrument>\"").warn; nil;
     }
     {
         t = ~newTrack.(ins, name, ~tracks.size);
@@ -771,7 +885,7 @@ ServerQuit.add(~forgetTracks, s);
             // still there? it can be removed before the buffer lands
             if (~tracks.any { |x| x === t }) {
                 ~buildTrackSynth.(t);
-                (~tlabel.(t) ++ " ADDED — in " ++ ~inLabel.(t)).postln;
+                (~tlabel.(t) ++ " ADDED — " ++ ~inLabel.(t)).postln;
             } {
                 ~freeTrack.(t);
             };
@@ -805,39 +919,68 @@ ServerQuit.add(~forgetTracks, s);
 // the new signal. Changing WIDTH rebuilds the buffer, because BufRd/BufWr channel counts
 // are fixed when the SynthDef is built — that clears the loop, and the post window says
 // so before it happens.
-~setTrackInput = { |i, inputs|
-    var t = ~tracks[i], ins = inputs.asArray.collect(_.asInteger);
+~setTrackInput = { |i, spec|
+    var t = ~tracks[i];
+    var ins = if (~specIsVst.(spec)) { spec } { spec.asArray.collect(_.asInteger) };
+    var isVst = ~specIsVst.(ins);
+    // width and kind together decide whether a .set is enough
+    var sameShape = { |t2| (~newTrack.(ins, "x", 0)[\inputs].size == t2[\inputs].size)
+        and: { (if (isVst) { \vst } { \input }) == t2[\source] } };
     case
     { t.isNil } { ("setTrackInput: no track " ++ i).warn; nil }
     { ~inputsValid.(ins).not } {
-        ("setTrackInput refused — inputs " ++ ins ++ " must be 1 or 2 indices in 0.."
-            ++ ((s.options.numInputBusChannels ? ~numInputs) - 1)).warn; nil;
+        ("setTrackInput refused — " ++ ~specLabel.(ins) ++ ": jacks must be 1 or 2 indices in 0.."
+            ++ ((s.options.numInputBusChannels ? ~numInputs) - 1)
+            ++ ", or \"vst:<instrument>\"").warn; nil;
     }
-    { ins == t[\inputs] } { t }
-    { ins.size == t[\inputs].size } {
-        t[\inputs] = ins;
+    { ~trackSpec.(t) == ins } { t }
+    // Same width AND same kind: a .set on the running synth. The loop keeps playing and
+    // an overdub in progress simply continues on the new signal.
+    { sameShape.(t) } {
+        var buses;
+        if (isVst) { t[\vstName] = ~specVstName.(ins) } { t[\inputs] = ins };
+        buses = ~trackSourceBuses.(t);
         t[\synth] !? { |x|
-            if (ins.size >= 2) { x.set(\inChanL, ins[0], \inChanR, ins[1]) } { x.set(\inChan, ins[0]) };
+            if (buses.size >= 2) { x.set(\inChanL, buses[0], \inChanR, buses[1]) }
+                { x.set(\inChan, buses[0]) };
+            x.set(\monLevel, ~trackMonLevel.(t));
         };
         ~syncLayoutVars.();
-        (~tlabel.(t) ++ " now on in " ++ ~inLabel.(t)).postln;
+        (~tlabel.(t) ++ " now on " ++ ~inLabel.(t)).postln;
         t;
     }
+    // A different width or kind means a new buffer and a new synth, so the loop goes.
     {
+        var wasVst = t[\source] == \vst;
         if (t[\state] != \idle) {
-            (~tlabel.(t) ++ " mono<->stereo change — the loop is cleared").postln;
+            (~tlabel.(t) ++ " source changes shape — the loop is cleared").postln;
         };
         ~freeTrack.(t);
-        t[\inputs] = ins;
+        if (isVst) {
+            t[\source] = \vst; t[\vstName] = ~specVstName.(ins); t[\inputs] = [0, 1];
+        } {
+            t[\source] = \input; t[\vstName] = nil; t[\inputs] = ins;
+        };
         ~syncLayoutVars.();
         fork {
             ~allocTrack.(t);
             s.sync;
             if (~tracks.any { |x| x === t }) { ~buildTrackSynth.(t) } { ~freeTrack.(t) };
-            (~tlabel.(t) ++ " rebuilt " ++ if (ins.size >= 2) { "stereo" } { "mono" }
-                ++ " on in " ++ ~inLabel.(t)).postln;
+            (~tlabel.(t) ++ " rebuilt on " ++ ~inLabel.(t)).postln;
         };
         t;
+    };
+};
+
+// An instrument opening, closing or being removed changes where its tracks read from.
+// Called by vst.scd; a .set, so a loop recorded from an instrument keeps playing even if
+// the plugin is reopened underneath it.
+~refreshVstTracks = { |name|
+    (~tracks ? []).do { |t|
+        if (t[\source] == \vst and: { name.isNil or: { t[\vstName] == name.asString } }) {
+            var buses = ~trackSourceBuses.(t);
+            t[\synth] !? { |x| x.set(\inChanL, buses[0], \inChanR, buses[1]) };
+        };
     };
 };
 
@@ -868,6 +1011,10 @@ ServerQuit.add(~forgetTracks, s);
     fork {
         var maxFrames, mb, chans = 0, nIn;
         s.sync;
+        // Nothing ever writes here. It is what a track bound to an instrument that is not
+        // open yet reads, so it records silence instead of bus 0 — which is the master
+        // output, and would mean recording the whole mix, including its own playback.
+        ~silentBus ?? { ~silentBus = Bus.audio(s, 2) };
         ~tracks.do { |t| ~allocTrack.(t); chans = chans + t[\inputs].size.clip(1, 2) };
         s.sync;
         ~buildTracks.value;
@@ -882,8 +1029,8 @@ ServerQuit.add(~forgetTracks, s);
         // say so, because "no signal" would otherwise look like a cable problem.
         nIn = s.options.numInputBusChannels ? ~numInputs ? 2;
         ~tracks.do { |t|
-            if (t[\inputs].any { |i| i >= nIn }) {
-                (~tlabel.(t) ++ " input " ++ ~inLabel.(t) ++ " is beyond the " ++ nIn
+            if (t[\source] != \vst and: { t[\inputs].any { |i| i >= nIn } }) {
+                (~tlabel.(t) ++ " " ++ ~inLabel.(t) ++ " is beyond the " ++ nIn
                     ++ " inputs this device was booted with — silent until re-wired").warn;
             };
         };

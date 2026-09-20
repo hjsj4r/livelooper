@@ -90,7 +90,11 @@ SynthDef(\vstFader, { |inBus = 0, out = 0, level = 1|
 
 // synths + controller + open. Called at creation, after Ctrl+., after a reboot.
 ~buildVst = { |inst|
-    inst[\synth] = Synth(\vsti, [out: inst[\bus]]);
+    ~ensureGroups !? { ~ensureGroups.() };
+    // In ~srcGroup, which runs BEFORE the loopers — that is what lets a track record this
+    // instrument in the same block instead of reading a bus scsynth has just cleared.
+    // See the order-of-execution note in looper.scd.
+    inst[\synth] = Synth(\vsti, [out: inst[\bus]], ~srcGroup);
     inst[\fader] = Synth(\vstFader, [inBus: inst[\bus], out: 0, level: inst[\level],
         meterRate: if (~metersOn ? false) { ~meterRate ? 0 } { 0 }], addAction: \addToTail);
     ~vstMeterNodes[inst[\fader].nodeID] = inst;
@@ -104,6 +108,9 @@ SynthDef(\vstFader, { |inBus = 0, out = 0, level = 1|
             inst[\data] !? { |d| c.setProgramData(d) };          // back to how you left it
             // Tidal: `# s "<name>"` — same-named entry is replaced, so a rebuild is safe
             ~dirt.soundLibrary.addMIDI(inst[\name].asSymbol, c.midi);
+            // A looper track bound to this instrument has been reading silence until
+            // now (the bus did not exist), so point it at the real one.
+            ~refreshVstTracks !? { ~refreshVstTracks.(inst[\name]) };
             (~vstLabel.(inst) ++ " " ++ c.info.name ++ " by " ++ c.info.vendor
                 ++ " — Tidal: # s \"" ++ inst[\name] ++ "\"").postln;
         } {
@@ -116,11 +123,18 @@ SynthDef(\vstFader, { |inBus = 0, out = 0, level = 1|
 };
 
 ~freeVst = { |inst|
+    // Hold the bus while clearing the field: any track recording this instrument has to
+    // be moved off it BEFORE it is freed (~trackSourceBuses sends them to the silent bus
+    // once the instrument is gone), and clearing the field first is what makes that
+    // lookup fail over. Taking the reference first is also what stops the bus leaking.
+    var bus = inst[\bus];
+    inst[\bus] = nil;
+    ~refreshVstTracks !? { ~refreshVstTracks.(inst[\name]) };
     inst[\fader] !? { |x| ~vstMeterNodes.removeAt(x.nodeID); x.free };
     inst[\ctl]   !? { |c| if (c.isOpen) { c.close } };
     inst[\synth] !? { |x| x.free };
-    inst[\bus]   !? { |x| x.free };
-    inst[\synth] = nil; inst[\fader] = nil; inst[\ctl] = nil; inst[\bus] = nil;
+    bus !? { |x| x.free };
+    inst[\synth] = nil; inst[\fader] = nil; inst[\ctl] = nil;
     inst[\state] = \closed;
     inst;
 };

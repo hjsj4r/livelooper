@@ -7,7 +7,7 @@
 //  Run it headless (no ZOOM H8 needed):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/stereo-test.scd
 //
-//  Expect: "12 passed, 0 failed".
+//  Expect: "15 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, st, mo;
@@ -47,8 +47,14 @@ s.waitForBoot({
         ok.("mono track has 1 input",     mo[\inputs] == [5]);
         ok.("stereo buffer is 2 channels", st[\buf].numChannels == 2);
         ok.("mono buffer is 1 channel",    mo[\buf].numChannels == 1);
-        ok.("stereo label reads as a pair", ~inLabel.(st) == "4+7");
-        ok.("mono label is a single index", ~inLabel.(mo) == "5");
+        // the label is what a person reads ("in 4+7"); the SPEC is what travels over OSC
+        // and gets written to config, and it distinguishes jacks from "vst:name"
+        ok.("stereo label reads as a pair", ~inLabel.(st) == "in 4+7");
+        ok.("mono label is a single index", ~inLabel.(mo) == "in 5");
+        ok.("stereo spec is machine-readable", ~trackSpecString.(st) == "4+7");
+        ok.("mono spec likewise",             ~trackSpecString.(mo) == "5");
+        ok.("a jack track reads jack buses",  ~trackSourceBuses.(mo)
+            == [s.options.numOutputBusChannels + 5]);
         ok.("tracks carry their names",     st[\name] == "pair" and: { mo[\name] == "monoA" });
         ok.("both synths exist",           st[\synth].notNil and: { mo[\synth].notNil });
 

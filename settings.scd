@@ -79,7 +79,10 @@
         when: "record", note: "length of a NEW loop. Per-track length is on the strips"),
     (key: \monLevel, label: "input monitor", min: 0, max: 1, step: 0.01,
         when: "now", note: "live input through SC. 0 if you monitor direct on the H8",
-        apply: { |v| (~tracks ? []).do { |t| t[\synth] !? { t[\synth].set(\monLevel, v) } } }),
+        // Not on a track fed by an instrument: you already hear that through the
+        // instrument's own fader, so monitoring it here would play it twice.
+        apply: { |v| (~tracks ? []).do { |t|
+            t[\synth] !? { t[\synth].set(\monLevel, ~trackMonLevel.(t)) } } }),
     (key: \clickDiv, label: "click division", min: 1, max: 8, step: 1,
         when: "beat", note: "clicks per bar. 4 = quarter notes in 4/4"),
     (key: \clickOffset, label: "click offset", min: -0.05, max: 0.05, step: 0.001,

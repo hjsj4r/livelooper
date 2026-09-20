@@ -93,9 +93,12 @@
 // One entry per track. Order = track order and dashboard strip order, so APPEND when
 // adding — inserting renumbers tracks and moves the selection under your fingers.
 //
-//   5        a mono jack on SC input 5
-//   [0, 1]   a STEREO pair — one track fed by two inputs, e.g. a stereo mic.
-//            The pair does not have to be adjacent.
+//   5            a mono jack on SC input 5
+//   [0, 1]       a STEREO pair — one track fed by two inputs, e.g. a stereo mic.
+//                The pair does not have to be adjacent.
+//   "vst:piano"  the VST instrument called piano — its own output, recorded pre-fader,
+//                so a phrase played on the keyboard loops like anything else. Always
+//                stereo. An instrument that is not loaded yet reads silence until it is.
 //
 // The H8's ASIO channel order is NOT a simple sequence, so never assume it: map every
 // jack with tools/input-scan.scd (tap each one, then ~inputSummary.()).
@@ -108,7 +111,7 @@
 // every source), so they are deliberately not tracks — 2 and 3 were unused.
 //
 // A session STARTS EMPTY: tracks are added from the dashboard's Setup view (or
-// ~addTrack.() in the editor), each on the jack you choose, with a live meter to confirm
+// ~addTrack.() in the editor), each on the jack or instrument you choose, with a live
 // it. Whatever is listed here is only what the rig boots with — a layout you have pressed
 // Save on. Leave both empty to always start from nothing. (Saving a whole session —
 // layout plus levels, lengths and so on — is planned separately.)

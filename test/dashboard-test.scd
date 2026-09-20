@@ -154,8 +154,10 @@ s.waitForBoot({
             lastInit.notNil and: { lastInit.size == (2 + (~tracks.size * 2)) });
         ok.("first pair carries track 0's name",
             lastInit[2].asString == ~tracks[0][\name].asString);
-        ok.("and its input label",
-            lastInit[3].asString == ~inLabel.(~tracks[0]).asString);
+        // the SPEC, not a display label: the page sends it straight back when re-wiring,
+        // so there is only one spelling of a source to keep in step
+        ok.("and its source spec",
+            lastInit[3].asString == ~trackSpecString.(~tracks[0]).asString);
         ok.("last pair carries the last track's name",
             lastInit[lastInit.size - 2].asString == ~tracks.last[\name].asString);
 

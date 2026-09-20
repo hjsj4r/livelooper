@@ -10,10 +10,10 @@
 //  Run it headless (no ZOOM H8 needed):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/vst-test.scd
 //
-//  Expect: "68 passed, 0 failed".
+//  Expect: "79 passed, 0 failed".
 // ============================================================
 (
-var pass = 0, fail = 0, ok, waitFor, inst, node, sandboxNote;
+var pass = 0, fail = 0, ok, waitFor, inst, node, sandboxNote, vt;
 
 ok = { |label, cond|
     if (cond) { pass = pass + 1; ("  PASS  " ++ label).postln }
@@ -230,6 +230,52 @@ s.waitForBoot({
         MIDIIn.doNoteOffAction(4343, 0, 67, 0);
         waitFor.({ (~vsts[1][\outAmp] ? 0) < 0.005 }, 6);
         ~vstRemove.(1); ~vstRemove.(0);
+
+        "".postln; "--- LOOPING AN INSTRUMENT ---".postln;
+        // A track fed by "vst:name" records the instrument's own bus, so the loop can be
+        // played on the keyboard instead of into a jack. The proof is a loop that still
+        // sounds AFTER the notes have stopped and the instrument itself is silent.
+        ~vstAdd.("keys", "Surge XT.vst3");
+        waitFor.({ ~vsts.size == 1 and: { ~vsts[0][\state] == \open } }, 25);
+        ~vstSetMidiSource.(0, "*");
+        vt = ~addTrack.("vst:keys", "keysloop");
+        waitFor.({ vt[\synth].notNil }, 10);
+        ok.("the track knows its source",     vt[\source] == \vst and: { vt[\vstName] == "keys" });
+        ok.("...is stereo, like the bus",     vt[\buf].numChannels == 2);
+        ok.("...and is saved as vst:keys",    ~trackInputs.last == "vst:keys");
+        ok.("its spec reads back",            ~trackSpecString.(vt) == "vst:keys");
+        ok.("it reads the instrument's bus",
+            ~trackSourceBuses.(vt) == [~vsts[0][\bus].index, ~vsts[0][\bus].index + 1]);
+        // It must NOT monitor: the instrument is already audible through its own fader,
+        // so monitoring here would play everything twice.
+        ok.("a VST track does not monitor",   ~trackMonLevel.(vt) == 0);
+
+        // record one loop from the keyboard, then check it repeats on its own
+        ~cps = 2.0; ~lastCycle = 0; ~lastEventTime = Main.elapsedTime;   // 4 bars = 2 s
+        ~pulse.();
+        ~trackRecord.(vt);
+        waitFor.({ vt[\state] == \recording }, 4);
+        MIDIIn.doNoteOnAction(4242, 0, 60, 110);
+        0.8.wait;
+        MIDIIn.doNoteOffAction(4242, 0, 60, 0);
+        waitFor.({ vt[\state] == \playing }, 8);
+        ok.("the take completes",             vt[\state] == \playing);
+        // silence the instrument entirely, so anything still heard can only be the loop
+        ~vstLevel.(~vsts[0], 0);
+        ~pulse.(); 0.5.wait;
+        ok.("the instrument itself is silent", (~vsts[0][\outAmp] ? 0) < 0.005);
+        ~loopHeard = 0;
+        8.do { ~pulse.(); 0.25.wait; ~loopHeard = max(~loopHeard, vt[\outAmp] ? 0) };
+        ("        (loop plays back at " ++ ~loopHeard.round(0.001) ++ ")").postln;
+        ok.("the loop plays the instrument back", ~loopHeard > 0.01);
+
+        // removing the instrument must not leave the track reading a freed bus
+        ~vstRemove.(0);
+        0.3.wait;
+        ok.("the track falls back to silence",
+            ~trackSourceBuses.(vt) == [~silentBus.index, ~silentBus.index + 1]);
+        ok.("...and the track still exists",  ~tracks.any { |x| x === vt });
+        ~removeTrack.(vt[\idx]);
 
         "".postln; "--- REBUILD FROM CONFIG ---".postln;
         ~vstInstruments = [["s1", "Surge XT.vst3", "Fake A"], ["bad", "Nope.vst3", ""]];

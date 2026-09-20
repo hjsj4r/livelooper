@@ -532,7 +532,7 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>'
 function buildTracks(args) {
   tracksMeta = [];
   for (let i = 0; i + 1 < args.length; i += 2) {
-    tracksMeta.push({ name: String(args[i]), inputs: String(args[i + 1]).split('+').map(Number) });
+    tracksMeta.push({ name: String(args[i]), spec: String(args[i + 1]) });
   }
   const c = $('tracks'); c.innerHTML = '';
   tracksMeta.forEach((tm, idx) => {
@@ -540,7 +540,7 @@ function buildTracks(args) {
     el.className = 'track'; el.dataset.idx = idx;
     el.innerHTML =
       `<div class="track-id"><div class="track-name" title="${esc(tm.name)}">${esc(tm.name)}</div>` +
-      `<div class="track-in">in ${esc(tm.inputs.join('+'))}<span class="meter" title="input level"><i></i></span></div></div>` +
+      `<div class="track-in">${esc(specLabel(tm.spec))}<span class="meter" title="input level"><i></i></span></div></div>` +
       `<button class="pin" title="pin into the selection">●</button>` +
       `<span class="track-badge">IDLE</span>` +
       `<input type="range" class="fader" min="0" max="1" step="0.01" value="1">` +
@@ -997,14 +997,49 @@ $('applyDev').onclick = () => {
 // ---- track builder ----
 // One row per track, editable in place. Changing the input menu re-wires the track at
 // once (its loop survives a same-width change); the name is sent on Enter or blur.
+// A track's source, as SC spells it: "5", "0+1", or "vst:piano".
+function parseSpec(spec) {
+  const s = String(spec || '');
+  return s.startsWith('vst:')
+    ? { vst: s.slice(4), jacks: [] }
+    : { vst: null, jacks: s.length ? s.split('+').map(Number) : [] };
+}
+function specLabel(spec) {
+  const p = parseSpec(spec);
+  return p.vst ? '♪ ' + p.vst : 'in ' + p.jacks.join('+');
+}
+// The SOURCE menu: every jack, then every instrument. An instrument is recorded from its
+// own bus, so looping a VST is the same gesture as looping a guitar.
+function sourceOptions(sel, spec) {
+  const p = parseSpec(spec);
+  sel.innerHTML = '';
+  for (let i = 0; i < (rig.ins || 0); i++) {
+    const o = document.createElement('option'); o.value = String(i); o.textContent = 'in ' + i; sel.appendChild(o);
+  }
+  for (const v of vsts) {
+    const o = document.createElement('option'); o.value = 'vst:' + v.name; o.textContent = '♪ ' + v.name; sel.appendChild(o);
+  }
+  if (p.vst && !vsts.some(v => v.name === p.vst)) {
+    // bound to an instrument that is not loaded right now — say so rather than snapping
+    // the menu to something else behind your back
+    const o = document.createElement('option'); o.value = 'vst:' + p.vst;
+    o.textContent = `♪ ${p.vst} — not loaded`; sel.appendChild(o);
+  }
+  if (p.jacks.length && p.jacks[0] >= (rig.ins || 0)) {
+    // a layout saved for a bigger interface: the jack does not exist on this one
+    const o = document.createElement('option'); o.value = String(p.jacks[0]);
+    o.textContent = `in ${p.jacks[0]} — not on this device`; sel.appendChild(o);
+  }
+  sel.value = p.vst ? 'vst:' + p.vst : String(p.jacks[0] ?? 0);
+}
+// The second jack, for a stereo pair. Meaningless for an instrument, whose bus is
+// already stereo, so it is disabled there rather than quietly ignored.
 function inputOptions(sel, current, allowNone) {
   sel.innerHTML = allowNone ? '<option value="">mono</option>' : '';
   for (let i = 0; i < (rig.ins || 0); i++) {
     const o = document.createElement('option'); o.value = String(i); o.textContent = 'in ' + i; sel.appendChild(o);
   }
   if (current !== undefined && current !== null && current !== '') {
-    // a layout saved for a bigger interface: the jack does not exist on this one. Show
-    // it as what it is rather than a blank menu, so re-wiring is an obvious next step.
     if (+current >= (rig.ins || 0)) {
       const o = document.createElement('option'); o.value = String(current);
       o.textContent = `in ${current} — not on this device`; sel.appendChild(o);
@@ -1026,16 +1061,22 @@ function buildBuilder() {
     name.onblur = send;
     name.onkeydown = (e) => { if (e.key === 'Enter') { send(); name.blur(); } if (e.key === 'Escape') { name.value = tm.name; name.blur(); } };
     const l = tr.querySelector('.l'), r = tr.querySelector('.r');
-    inputOptions(l, tm.inputs[0], false);
-    inputOptions(r, tm.inputs.length > 1 ? tm.inputs[1] : '', true);
+    const p = parseSpec(tm.spec);
+    sourceOptions(l, tm.spec);
+    inputOptions(r, p.jacks.length > 1 ? p.jacks[1] : '', true);
+    r.disabled = !!p.vst;                 // an instrument's bus is already stereo
+    const redraw = () => { sourceOptions(l, tm.spec); inputOptions(r, p.jacks.length > 1 ? p.jacks[1] : '', true); r.disabled = !!p.vst; };
     const rewire = () => {
-      const a = parseInt(l.value, 10), b = r.value === '' ? null : parseInt(r.value, 10);
-      const widthChange = (b === null) !== (tm.inputs.length === 1);
-      if (widthChange && (trackStates[idx] || 'idle') !== 'idle'
-          && !confirm('Changing between mono and stereo rebuilds the track and clears its loop. Continue?')) {
-        inputOptions(l, tm.inputs[0], false); inputOptions(r, tm.inputs.length > 1 ? tm.inputs[1] : '', true); return;
+      const isVst = l.value.startsWith('vst:');
+      const b = (isVst || r.value === '') ? null : parseInt(r.value, 10);
+      const spec = isVst ? l.value : (b === null ? l.value : `${l.value}+${b}`);
+      // Changing width OR kind rebuilds the track, which clears its loop.
+      const shapeChange = isVst !== !!p.vst || (!isVst && (b === null) !== (p.jacks.length === 1));
+      if (shapeChange && (trackStates[idx] || 'idle') !== 'idle'
+          && !confirm('Changing the source between mono, stereo and an instrument rebuilds the track and clears its loop. Continue?')) {
+        redraw(); return;
       }
-      cmd('/cmd/setTrackInput', b === null ? [idx, a] : [idx, a, b]);
+      cmd('/cmd/setTrackInput', [idx, spec]);
     };
     l.onchange = rewire; r.onchange = rewire;
     tr.querySelector('.rm').onclick = () => {
@@ -1046,18 +1087,24 @@ function buildBuilder() {
   });
   $('ttCount').textContent = `${tracksMeta.length} of ${rig.maxTracks || '?'} (~maxTracks in config.scd)`;
   const full = rig.maxTracks && tracksMeta.length >= rig.maxTracks;
-  $('addTrack').disabled = !!full || !rig.ins;
+  $('addTrack').disabled = !!full || (!rig.ins && !vsts.length);
   $('addTrack').textContent = full ? 'At the limit' : 'Add track';
   // next free jack as the default for a new track — a small thing, but it is what you want
-  const used = new Set(tracksMeta.flatMap(t => t.inputs));
+  const used = new Set(tracksMeta.flatMap(t => parseSpec(t.spec).jacks));
   let free = 0; while (used.has(free) && free < rig.ins) free++;
-  inputOptions($('newInL'), Math.min(free, Math.max(0, rig.ins - 1)), false);
+  const keep = $('newInL').value;
+  sourceOptions($('newInL'), String(Math.min(free, Math.max(0, rig.ins - 1))));
+  if (keep && [...$('newInL').options].some(o => o.value === keep)) $('newInL').value = keep;
   inputOptions($('newInR'), '', true);
+  $('newInR').disabled = $('newInL').value.startsWith('vst:');
 }
+$('newInL').onchange = () => { $('newInR').disabled = $('newInL').value.startsWith('vst:'); };
 $('addTrack').onclick = () => {
-  const a = parseInt($('newInL').value, 10), b = $('newInR').value === '' ? null : parseInt($('newInR').value, 10);
+  const src = $('newInL').value;
+  const isVst = src.startsWith('vst:');
+  const b = (isVst || $('newInR').value === '') ? null : parseInt($('newInR').value, 10);
   const name = $('newName').value.trim();
-  const args = b === null ? [a] : [a, b];
+  const args = [isVst ? src : (b === null ? src : `${src}+${b}`)];
   if (name) args.push(name);
   cmd('/cmd/addTrack', args);
   $('newName').value = '';
@@ -1134,6 +1181,9 @@ function applyVsts(args) {
   });
   $('vstCount').textContent = `${vsts.length} of ${rig.maxVsts || 8}`;
   $('vstAdd').disabled = !vstAvailable || !vstPlugins.length;
+  // a track can be fed by an instrument, so the track builder's source menus change
+  // whenever the instruments do
+  buildBuilder();
 }
 function applyVstPlugins(args) {
   vstPlugins = args.map(String);

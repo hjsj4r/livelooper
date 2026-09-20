@@ -165,7 +165,13 @@ sequence — map it rather than guessing:
         VSTPlugin extension, played from Tidal (`# s "surge"`) through SuperDirt's own MIDI
         event type and from a MIDI keyboard, with the plugin's editor a button away. State
         is snapshotted so it survives `Ctrl+.` and a device switch. Covered by
-        `test/vst-test.scd`. Next: point a looper at an instrument's bus to record it.
+        `test/vst-test.scd`.
+- [x] **14. Looping MIDI instruments** — a track's source is a jack OR an instrument, so
+        playing a phrase on the keyboard and looping it is the same gesture as looping a
+        guitar. The looper reads an absolute bus (a jack is just `NumOutputBuses + jack`),
+        instruments run in `~srcGroup` ahead of the loopers so a take cannot record the
+        silence of a not-yet-written bus, and an unresolved instrument reads a dedicated
+        silent bus rather than the master. Covered by `test/vst-test.scd`.
 
 ## How loops line up
 
@@ -231,14 +237,14 @@ $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/looper-test.scd      # 34 passed
 & $sc -D d:/livelooper/test/dashboard-test.scd   # 50 passed
 & $sc -D d:/livelooper/test/nav-test.scd         # 29 passed
-& $sc -D d:/livelooper/test/stereo-test.scd      # 12 passed
+& $sc -D d:/livelooper/test/stereo-test.scd      # 15 passed
 & $sc -D d:/livelooper/test/fx-test.scd          # 19 passed
 & $sc -D d:/livelooper/test/join-test.scd        # 44 passed
 & $sc -D d:/livelooper/test/select-test.scd      # 65 passed
 & $sc -D d:/livelooper/test/acid-test.scd        # 40 passed
-& $sc -D d:/livelooper/test/layout-test.scd      # 73 passed
+& $sc -D d:/livelooper/test/layout-test.scd      # 80 passed
 & $sc -D d:/livelooper/test/devices-test.scd     # 42 passed  (boots its own server twice)
-& $sc -D d:/livelooper/test/vst-test.scd         # 68 passed  (needs VSTPlugin + Surge XT; skips otherwise)
+& $sc -D d:/livelooper/test/vst-test.scd         # 79 passed  (needs VSTPlugin + Surge XT; skips otherwise)
 ```
 
 None of them needs the H8, and **they're safe to run while your rig is booted** — each
@@ -342,22 +348,49 @@ device" in the Setup menus until it is re-wired.
 ## Tracks from the dashboard
 
 A session starts with **zero tracks**. The **Tracks** panel in Setup is where the layout
-is built: name, input jack (one, or a
-pair for stereo), a live input meter so you can *see* which jack you plugged into, and
+is built: name, **source**, a live input meter so you can *see* what you plugged into, and
 Remove. **Add track** appends — never inserts — so existing strips keep their numbers.
 
-- **Re-wiring a track to another jack keeps its loop.** The input index is a control-rate
-  bus number the synth reads, so the change is a `.set`, with no dropout — an overdub in
+A source is a hardware jack (one, or a pair for stereo) **or a VST instrument**, picked
+from the same menu — instruments appear there as `♪ piano`. That is the whole of "looping
+a MIDI instrument": the track records the instrument's output, so you play a phrase on the
+keyboard, it loops, and you keep playing over it.
+
+- **Re-wiring a track to another jack keeps its loop.** The input is a control-rate bus
+  number the synth reads, so the change is a `.set`, with no dropout — an overdub in
   progress simply continues on the new signal.
-- **Changing between mono and a stereo pair rebuilds the track and clears its loop**,
-  because BufRd/BufWr channel counts are fixed when the SynthDef is built. The page asks
-  first if the track is playing.
+- **Changing the source's shape rebuilds the track and clears its loop** — mono ↔ stereo,
+  or jack ↔ instrument — because BufRd/BufWr channel counts are fixed when the SynthDef is
+  built. The page asks first if the track is playing.
 - The cap is `~maxTracks` (12). Each track costs a looper + FX synth and one pre-allocated
   buffer — ~7 MB mono, ~14 MB stereo at the defaults — so the limit is the interface's
   input count and a strip list you can still navigate mid-set, not the machine.
 
 From the editor: `~addTrack.(5, "bass");  ~addTrack.([0, 1], "mic");
-~setTrackInput.(2, 7);  ~renameTrack.(2, "synth");  ~removeTrack.(2);`
+~addTrack.("vst:piano", "keys");  ~setTrackInput.(2, 7);  ~renameTrack.(2, "synth");
+~removeTrack.(2);`
+
+### Looping a VST instrument
+
+A track whose source is `vst:<name>` records that instrument's **own bus**, which has
+three consequences worth knowing:
+
+- **The recording is pre-fader.** Moving the instrument's level afterwards changes what
+  you hear live, never what was recorded.
+- **The track does not monitor.** You already hear the instrument through its own fader,
+  so monitoring it on the track as well would play it twice — and adding a track would
+  make the instrument jump in level for no visible reason. `~monLevel` skips these tracks.
+- **Order of execution matters, and is handled.** scsynth zeroes every audio bus at the
+  start of each control block, so a looper that runs *before* its instrument records
+  silence — not late audio, silence. Instruments therefore live in `~srcGroup` and loopers
+  in `~loopGroup`, which runs after it (FX stay at the tail). Without those groups this
+  worked or didn't depending on whether the track or the instrument was added first.
+
+An instrument that is not open yet — the plugin scan is async, and a saved layout can name
+one that was removed — reads a dedicated **silent bus** rather than bus 0. Bus 0 is the
+master output, so the obvious fallback would record the entire mix, including the track's
+own playback: feedback on the first press of record. When the instrument opens, its tracks
+are pointed at the real bus with a `.set`, so a loop already recorded keeps playing.
 
 The layout lives in `~trackInputs` / `~trackNames` — the same variables `config.scd`
 sets at boot — so it survives a reload of `looper.scd` and a device switch, and Save
@@ -385,8 +418,8 @@ That goes through SuperDirt's own MIDI event type — `addMIDI` takes anything w
 `MIDIOut`-shaped API, and the plugin controller's `.midi` is exactly that — so the notes
 are scheduled on SuperDirt's clock like everything else, and Tidal's MIDI params
 (`midichan`, `ccn`/`ccv`, `nrpn`, `midibend`…) all work. **Editor** opens the plugin's own
-window. Each instrument has a level and a meter, and its own stereo bus — the same shape
-as a track, which is what will let a looper record it later.
+window. Each instrument has a level and a meter, and its own stereo bus — which is what a
+looper track records when you point it at the instrument (see *Looping a VST instrument*).
 
 ### MIDI keyboards
 
