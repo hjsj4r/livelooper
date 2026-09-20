@@ -46,6 +46,12 @@ s.waitForBoot({
         OSCdef(\ltInit, { |msg| inits = inits + 1; lastInit = msg }, '/tracksInit');
         "D:/livelooper/settings.scd".load;
         "D:/livelooper/looper.scd".load;
+        // THE CLOCK IS DRIVEN BY HAND BELOW, so refuse live events: this SuperDirt
+        // listens on sclang's own port, which is 57120 when it is free — the port a
+        // running Tidal sends to. One stray event sets ~lastCycle to that session's
+        // cycle counter (seen: 876) and every timing assertion here then measures the
+        // wrong phrase. panic-test keeps receiveAction on purpose; it tests it.
+        ~dirt.receiveAction = nil;
         "D:/livelooper/dashboard.scd".load;
         settled.(5);
         1.0.wait;

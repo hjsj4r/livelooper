@@ -42,6 +42,12 @@ s.waitForBoot({
         ~dirt.start(~dirtPort, [0, 0]);
         1.0.wait;
         "D:/livelooper/looper.scd".load;
+        // THE CLOCK IS DRIVEN BY HAND BELOW, so refuse live events: this SuperDirt
+        // listens on sclang's own port, which is 57120 when it is free — the port a
+        // running Tidal sends to. One stray event sets ~lastCycle to that session's
+        // cycle counter (seen: 876) and every timing assertion here then measures the
+        // wrong phrase. panic-test keeps receiveAction on purpose; it tests it.
+        ~dirt.receiveAction = nil;
         // Wait for the build fork to finish rather than guessing: allocating the
         // pre-sized buffers takes as long as it takes.
         while { ~tracks.isNil or: { ~tracks.any { |x| x[\synth].isNil } } } { 0.2.wait };

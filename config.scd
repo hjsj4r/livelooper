@@ -20,11 +20,11 @@
 // expose input-only and output-only endpoints, so to record through one device and play
 // through another set ~audioDevice = nil and name the two halves separately.
 // All of these are what the dashboard writes when you pick a device and press Save.
-~audioDevice = nil;
-~inDevice    = "Windows WASAPI : Varios micrófonos (Intel® Smart Sound Technology for Digital Microphones)";          // only read when ~audioDevice is nil
-~outDevice   = "Windows WASAPI : Altavoces (Realtek(R) Audio)";          // only read when ~audioDevice is nil
+~audioDevice = "ASIO : ZOOM H8 Audio Driver";
+~inDevice    = nil;          // only read when ~audioDevice is nil
+~outDevice   = nil;          // only read when ~audioDevice is nil
 ~sampleRate  = 44100;        // H8 ASIO requires 44100. nil = whatever the device prefers
-~numInputs   = 1;           // raise if a jack maps past index 11 (tools/input-scan.scd).
+~numInputs   = 12;           // raise if a jack maps past index 11 (tools/input-scan.scd).
                              // Asking for MORE inputs than the device has is safe — the
                              // extra channels are simply silent — so the scan's count is
                              // a floor, not a ceiling.
@@ -77,7 +77,7 @@
 // Added from the dashboard's Setup view; Save writes them here like the tracks. A
 // session starts with none unless listed.
 //     ~vstInstruments = [["surge", "Surge XT.vst3", "CASIO USB-MIDI"]];
-~vstInstruments = [];
+~vstInstruments = [["piano", "Surge XT.vst3", "*"]];
 ~maxVsts        = 8;         // each one is a plugin instance; Surge XT is light, a big
                              // sampler is not — the machine's RAM is the real limit
 // Read hardware MIDI at all. Each instrument picks its own keyboard from what the scan
@@ -116,12 +116,12 @@
 // The H8 layout that used to live here, for reference:
 //     ~trackInputs = [[0, 1], 5, 9, 7, 8, 4, 6];
 //     ~trackNames  = ["mic", "bass", "synth", "voice", "spdsx", "bomboclat", "overhead"];
-~trackInputs   = [];
+~trackInputs   = [5, 8];
 
 // Display names, in the same order. Shown on the dashboard strips and in the post
 // window. tools/input-scan.scd prints this line alongside ~trackInputs so the two
 // cannot drift apart. A missing name falls back to "Track N".
-~trackNames    = [];
+~trackNames    = ["Track 0", "Track 1"];
 
 // Ceiling on tracks the dashboard will let you add. Each one costs a looper + FX synth
 // (cheap) and a pre-allocated buffer: at the defaults below that is ~7 MB mono, ~14 MB

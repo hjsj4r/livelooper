@@ -83,8 +83,15 @@ OSCdef(\cmdVstRemove, { |msg| ~vstRemove !? { ~vstRemove.(msg[1].asInteger) } },
 OSCdef(\cmdVstLevel,  { |msg| (~vsts ? [])[msg[1].asInteger] !? { |i| ~vstLevel.(i, msg[2].asFloat) } }, '/cmd/vstLevel').fix;
 OSCdef(\cmdVstEditor, { |msg| ~vstEditor !? { ~vstEditor.(msg[1].asInteger) } }, '/cmd/vstEditor').fix;
 // The MIDI source is per instrument, as a label ("" none, "*" any, else the device).
+// A message with no label came from a dashboard page older than this feature, whose MIDI
+// button sent only an index. Taking that as "unbind" would silence the instrument and
+// look like broken MIDI, so say what it is instead.
 OSCdef(\cmdVstMidi,   { |msg|
-    ~vstSetMidiSource !? { ~vstSetMidiSource.(msg[1].asInteger, if (msg.size > 2) { msg[2].asString } { "" }) };
+    if (msg.size > 2) {
+        ~vstSetMidiSource !? { ~vstSetMidiSource.(msg[1].asInteger, msg[2].asString) };
+    } {
+        "dashboard: an old page sent /cmd/vstMidi without a device — reload it (Ctrl+Shift+R)".warn;
+    };
 }, '/cmd/vstMidi').fix;
 OSCdef(\cmdVstScan,   { ~vstSearch !? { ~vstSearch.() } }, '/cmd/vstScan').fix;
 OSCdef(\cmdMidiScan,  { ~scanMidiSources !? { ~scanMidiSources.() } }, '/cmd/midiScan').fix;
@@ -102,6 +109,14 @@ OSCdef(\cmdMidiScan,  { ~scanMidiSources !? { ~scanMidiSources.() } }, '/cmd/mid
 // The keyboards this machine can see, by label — what the per-instrument menu offers.
 ~sendMidiSources = {
     ~dash.sendMsg('/midiSources', *(~midiSources ? []).collect({ |x| x[\label].asString }));
+};
+// The last note that arrived, which device it came from, and how many instruments took
+// it. Sent only when a note actually arrives, so it costs nothing while you are not
+// playing — and it is what tells you whether the keyboard is reaching SC at all.
+~sendMidiActivity = {
+    var m = ~midiLast ? ();
+    ~dash.sendMsg('/midiActivity', (m[\label] ? "").asString, (m[\text] ? "").asString,
+        (m[\taken] ? 0).asInteger);
 };
 ~sendVstLevels = {
     ~dash.sendMsg('/vstLevels', *(~vsts ? []).collect({ |i| (i[\level] ? 1.0).asFloat }));
@@ -304,7 +319,7 @@ OSCdef(\cmdGetTracks, {
         var tracks, n = -1;
         var lastStates, lastLevels, lastFx, lastCycles;
         var lastPins = nil, pinned, lastLayout = nil, lastBoot = nil, lastScan = nil;
-        var lastVst = nil, lastVstLevels = nil, vstLevels, lastMidi = nil;
+        var lastVst = nil, lastVstLevels = nil, vstLevels, lastMidi = nil, lastMidiAct = nil;
         var lastFocus = nil, lastClick = nil, nextClock = 0, nextMeter = 0;
         var changed, moved, driven, rebar, now;
         while({ myGen == ~dashGen }, {
@@ -363,6 +378,7 @@ OSCdef(\cmdGetTracks, {
                 lastVst = ~vstGen; ~sendVsts.(); ~sendVstPlugins.(); ~sendVstLevels.(); ~sendConfig.();
             };
             if (lastMidi != ~midiGen) { lastMidi = ~midiGen; ~sendMidiSources.(); ~sendVsts.() };
+            if (lastMidiAct != ~midiActivityGen) { lastMidiAct = ~midiActivityGen; ~sendMidiActivity.() };
             vstLevels = (~vsts ? []).collect { |i| i[\level] ? 1.0 };
             if (vstLevels != lastVstLevels) { lastVstLevels = vstLevels; ~sendVstLevels.() };
             if (now >= nextClock) { nextClock = now + clockEvery; ~sendClock.() };

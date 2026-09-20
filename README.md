@@ -238,7 +238,7 @@ $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/acid-test.scd        # 40 passed
 & $sc -D d:/livelooper/test/layout-test.scd      # 73 passed
 & $sc -D d:/livelooper/test/devices-test.scd     # 42 passed  (boots its own server twice)
-& $sc -D d:/livelooper/test/vst-test.scd         # 61 passed  (needs VSTPlugin + Surge XT; skips otherwise)
+& $sc -D d:/livelooper/test/vst-test.scd         # 68 passed  (needs VSTPlugin + Surge XT; skips otherwise)
 ```
 
 None of them needs the H8, and **they're safe to run while your rig is booted** — each

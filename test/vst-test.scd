@@ -10,7 +10,7 @@
 //  Run it headless (no ZOOM H8 needed):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/vst-test.scd
 //
-//  Expect: "61 passed, 0 failed".
+//  Expect: "68 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, waitFor, inst, node, sandboxNote;
@@ -149,6 +149,29 @@ s.waitForBoot({
         MIDIIn.doNoteOffAction(4343, 0, 60, 0);
         ok.("an unknown device is refused",   ~vstSetMidiSource.(0, "no such keyboard").isNil);
         ok.("...and the binding is unchanged", inst[\midiSrc] == "Fake A");
+
+        // The activity readout is how "nothing is arriving" is told apart from "it
+        // arrives but nothing is bound to that device" — they sound identical.
+        MIDIIn.doNoteOnAction(4242, 0, 72, 99);
+        0.2.wait;
+        ok.("activity names the device",      ~midiLast[\label] == "Fake A");
+        ok.("...and the note",                ~midiLast[\text].contains("note 72"));
+        ok.("...and that something took it",  ~midiLast[\taken] == 1);
+        MIDIIn.doNoteOffAction(4242, 0, 72, 0);
+        MIDIIn.doNoteOnAction(4343, 0, 71, 99);
+        0.2.wait;
+        ok.("an unbound device reports 0 takers", ~midiLast[\taken] == 0
+            and: { ~midiLast[\label] == "Fake B" });
+        MIDIIn.doNoteOffAction(4343, 0, 71, 0);
+
+        // A rescan that comes back empty must not wipe what we know — that would drop
+        // every binding's meaning on a hiccup in the re-init.
+        ok.("an empty rescan keeps the known sources",
+            ~midiMergeScan.([], ~midiSources).size == ~midiSources.size);
+        ok.("a rescan that finds something replaces the list",
+            ~midiMergeScan.([(label: "New")], ~midiSources) == [(label: "New")]);
+        ok.("empty on empty stays empty",     ~midiMergeScan.([], []).isEmpty);
+
         ~vstSetMidiSource.(0, "*");
 
         "".postln; "--- LEVEL ---".postln;

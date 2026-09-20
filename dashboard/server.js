@@ -70,11 +70,36 @@ const udp = dgram.createSocket('udp4');
 udp.bind(SC_RECV_PORT, () => console.log(`[OSC] listening for SC on :${SC_RECV_PORT}`));
 
 const sseClients = new Set();
-udp.on('message', (msg) => {
-  let decoded;
-  try { decoded = decodeOSC(msg); } catch (e) { return; }
+
+// TWO RIGS, ONE BRIDGE. If an old sclang is still running when a new one starts, both
+// stream state here and the page shows whichever packet arrived last — instruments
+// appear and vanish, a device list goes empty, MIDI seems to break. It looks like a bug
+// in the rig and it is not. The senders' UDP ports tell them apart, so say so.
+const scSenders = new Map();          // source port -> last seen (ms)
+let lastConflictWarning = 0;
+function noteSender(port) {
+  const now = Date.now();
+  scSenders.set(port, now);
+  for (const [p, t] of scSenders) if (now - t > 10000) scSenders.delete(p);
+  if (scSenders.size > 1 && now - lastConflictWarning > 15000) {
+    lastConflictWarning = now;
+    const ports = [...scSenders.keys()].join(', ');
+    console.warn(`[OSC] *** ${scSenders.size} SuperCollider instances are sending state ` +
+      `(ports ${ports}). The dashboard will flicker between them — quit the older sclang.`);
+    broadcast({ address: '/bridge/conflict', args: [scSenders.size, ports] });
+  }
+}
+
+function broadcast(decoded) {
   const line = `data: ${JSON.stringify(decoded)}\n\n`;
   for (const res of sseClients) { try { res.write(line); } catch (e) {} }
+}
+
+udp.on('message', (msg, rinfo) => {
+  let decoded;
+  try { decoded = decodeOSC(msg); } catch (e) { return; }
+  noteSender(rinfo.port);
+  broadcast(decoded);
 });
 
 function sendToSC(address, args) {
@@ -87,7 +112,16 @@ const server = http.createServer((req, res) => {
   if (req.url === '/' || req.url === '/index.html') {
     fs.readFile(path.join(__dirname, 'index.html'), (err, data) => {
       if (err) { res.writeHead(500); res.end('index.html not found'); return; }
-      res.writeHead(200, { 'Content-Type': 'text/html' });
+      // NEVER cache the page. It changes with the rig, and a browser holding yesterday's
+      // copy is the worst kind of bug to chase: the UI looks right, speaks a slightly
+      // older protocol, and every symptom points at SuperCollider. One stale page cost
+      // an evening of debugging MIDI that was working the whole time.
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache',
+        'Expires': '0',
+      });
       res.end(data);
     });
     return;

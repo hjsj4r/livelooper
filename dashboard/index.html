@@ -117,6 +117,10 @@
   .fxbar { width: 52px; height: 6px; background: #10141b; border-radius: 3px; overflow: hidden; flex-shrink: 0; }
   .fxbar > i { display: block; height: 100%; width: 0%; background: var(--rec); transition: width .05s linear; }
   .track.driven { border-color: var(--rec); }
+  /* live MIDI readout: green when an instrument took the note, amber when nothing did */
+  .midiact { font-variant-numeric: tabular-nums; margin: -4px 0 10px; transition: color .15s; }
+  .midiact.on { color: var(--play); }
+  .midiact.warn { color: var(--dub); }
   .track select { background: #10141b; border: 1px solid var(--line); border-radius: 7px; color: var(--text);
                    padding: 7px 8px; font: inherit; font-size: 12px; max-width: 170px; }
   .track button { background: #10141b; color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
@@ -272,8 +276,9 @@
     <div class="panel" id="vstPanel" style="display:none">
       <div class="label row">
         <span>Instruments</span>
-        <span class="dim" id="vstHint">MIDI keyboard → the one marked</span>
+        <span class="dim" id="vstHint">MIDI keyboards</span>
       </div>
+      <div class="dim midiact" id="midiAct">play a key — what arrives shows here</div>
       <div class="tracks" id="vsts"></div>
     </div>
   </div>
@@ -1168,6 +1173,18 @@ function applyMidiSources(args) {
   midiSources = args.map(String);
   applyVsts(lastVstArgs);      // the menus are built from this list, so redraw them
 }
+// Live proof that a keyboard is reaching SuperCollider, and whether anything is bound to
+// it. "nothing is arriving" and "it arrives but no instrument wants it" look identical
+// from a silent speaker; this tells them apart without opening the post window.
+let midiActTimer;
+function applyMidiActivity(args) {
+  const [label, text, taken] = [String(args[0]), String(args[1]), +args[2]];
+  const el = $('midiAct');
+  el.textContent = `♪ ${label}: ${text} → ${taken ? `${taken} instrument${taken === 1 ? '' : 's'}` : 'nothing bound to this device'}`;
+  el.className = 'dim midiact' + (taken ? ' on' : ' warn');
+  clearTimeout(midiActTimer);
+  midiActTimer = setTimeout(() => { el.className = 'dim midiact'; }, 900);
+}
 
 // ---- settings ----
 // SC owns both the spec and the values. The browser holds no defaults of its own: a
@@ -1263,6 +1280,18 @@ es.onmessage = (e) => {
     case '/vstInit':     applyVsts(a); break;
     case '/vstPlugins':  applyVstPlugins(a); break;
     case '/midiSources': applyMidiSources(a); break;
+    case '/midiActivity': applyMidiActivity(a); break;
+    // Two sclang instances feeding one bridge: the page would flicker between them and
+    // every symptom would look like a bug in the rig.
+    case '/bridge/conflict': {
+      const b = $('rigBanner');
+      b.className = 'banner show';
+      $('rigBannerText').innerHTML =
+        `<b>${+a[0]} SuperCollider instances are sending to this dashboard</b> (ports ${esc(String(a[1]))}). ` +
+        `The display will flicker between them — quit the older sclang and reload.`;
+      $('rigBannerBtn').style.display = 'none';
+      break;
+    }
     case '/vstLevels':   applyVstLevels(a); break;
     case '/vstMeters':   applyVstMeters(a); break;
     case '/state': {

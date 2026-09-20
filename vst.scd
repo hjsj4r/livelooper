@@ -219,20 +219,36 @@ SynthDef(\vstFader, { |inBus = 0, out = 0, level = 1|
     case { d.isEmpty } { n } { n.isEmpty or: { n == d } } { d } { d ++ " — " ++ n };
 };
 
+// A rescan that suddenly finds nothing where there was something is far more often a
+// hiccup in re-initialising the MIDI client than a keyboard that actually vanished, and
+// blanking the list would quietly drop the meaning of every binding — each one would
+// resolve to no device and go silent. So keep what we knew and say so.
+~midiMergeScan = { |found, known|
+    if (found.isEmpty and: { (known ? []).notEmpty }) {
+        ("vst: the MIDI rescan found nothing — keeping the " ++ known.size
+            ++ " source(s) already known. Unplugged? Another program holding the port?").warn;
+        known;
+    } {
+        found;
+    };
+};
+
 // Re-enumerate. MIDIClient.init disposes the old client first, so this picks up a
 // keyboard plugged in after boot; connectAll then opens every source. Both can throw on
 // a machine with no MIDI at all, hence the try.
 ~scanMidiSources = { |done|
+    var found;
     try {
         MIDIClient.init(verbose: false);
         MIDIIn.connectAll(false);
-        ~midiSources = MIDIClient.sources.collect { |e|
+        found = MIDIClient.sources.collect { |e|
             (uid: e.uid, device: e.device.asString, name: e.name.asString,
                 label: ~midiLabel.(e.device, e.name))
         };
+        ~midiSources = ~midiMergeScan.(found, ~midiSources);
     } { |e|
-        ("vst: MIDI scan failed — " ++ e.errorString).warn;
-        ~midiSources = [];
+        ("vst: MIDI scan failed — " ++ e.errorString
+            ++ " (keeping " ++ ~midiSources.size ++ " known source(s))").warn;
     };
     ~midiGen = ~midiGen + 1;
     ~vstGen  = ~vstGen + 1;          // labels resolve against the new list
@@ -271,15 +287,31 @@ SynthDef(\vstFader, { |inBus = 0, out = 0, level = 1|
     };
 };
 
+// What arrived last, and whether anything wanted it. This is the answer to "why is the
+// keyboard silent": it separates "nothing is reaching SuperCollider" (cable, driver,
+// another program holding the port) from "it arrives but no instrument is bound to that
+// device", which look identical from the outside. The dashboard shows it live.
+~midiLast = ~midiLast ? (text: "", label: "", time: 0, taken: 0);
+
 if (~vstMidiIn ? true) {
     // src is the source's uid. An instrument on "*" takes everything; one bound to a
     // label takes only that device's uids.
     ~vstMidi = { |cmd, src ...args|
+        var taken = 0;
         ~vsts.do { |inst|
             var l = inst[\midiSrc] ? "";
             if (l.isEmpty.not and: { (l == "*") or: { ~midiUidsFor.(l).any { |u| u == src } } }) {
-                inst[\ctl] !? { |c| if (c.isOpen) { c.midi.performList(cmd, args) } };
+                inst[\ctl] !? { |c| if (c.isOpen) { c.midi.performList(cmd, args); taken = taken + 1 } };
             };
+        };
+        // Only note-ons are worth showing — a clock or a stream of CCs would just blur.
+        if (cmd == \noteOn) {
+            ~midiLast = (
+                text: "note " ++ args[1] ++ " vel " ++ args[2] ++ " ch " ++ (args[0] + 1),
+                label: (~midiSources.detect({ |x| x[\uid] == src }) !? { |x| x[\label] })
+                    ?? { "uid " ++ src },
+                time: Main.elapsedTime, taken: taken);
+            ~midiActivityGen = (~midiActivityGen ? 0) + 1;
         };
     };
     MIDIdef.noteOn (\vstNoteOn,  { |vel, num, chan, src| ~vstMidi.(\noteOn,  src, chan, num, vel) }).fix;
