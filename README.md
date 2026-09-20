@@ -238,7 +238,7 @@ $sc = "C:\Program Files\SuperCollider-3.14.1\sclang.exe"
 & $sc -D d:/livelooper/test/acid-test.scd        # 40 passed
 & $sc -D d:/livelooper/test/layout-test.scd      # 73 passed
 & $sc -D d:/livelooper/test/devices-test.scd     # 42 passed  (boots its own server twice)
-& $sc -D d:/livelooper/test/vst-test.scd         # 41 passed  (needs VSTPlugin + Surge XT; skips otherwise)
+& $sc -D d:/livelooper/test/vst-test.scd         # 61 passed  (needs VSTPlugin + Surge XT; skips otherwise)
 ```
 
 None of them needs the H8, and **they're safe to run while your rig is booted** — each
@@ -384,11 +384,27 @@ d1 $ n "0 4 7 <12 9>" # s "surge" # sustain 0.4
 That goes through SuperDirt's own MIDI event type — `addMIDI` takes anything with a
 `MIDIOut`-shaped API, and the plugin controller's `.midi` is exactly that — so the notes
 are scheduled on SuperDirt's clock like everything else, and Tidal's MIDI params
-(`midichan`, `ccn`/`ccv`, `nrpn`, `midibend`…) all work. A **MIDI keyboard** is forwarded
-to one instrument, the one marked **MIDI** on the Perform view (channel passed through
-unchanged); **Editor** opens the plugin's own window. Each instrument has a level and a
-meter, and its own stereo bus — the same shape as a track, which is what will let a
-looper record it later.
+(`midichan`, `ccn`/`ccv`, `nrpn`, `midibend`…) all work. **Editor** opens the plugin's own
+window. Each instrument has a level and a meter, and its own stereo bus — the same shape
+as a track, which is what will let a looper record it later.
+
+### MIDI keyboards
+
+Every instrument picks its **own** keyboard, from a menu on its strip (Perform) or its row
+(Setup): *no MIDI*, *any device*, or one of the devices found by the scan. So two
+controllers can play two plugins at once, and adding a second instrument does not silently
+double what you play — the first instrument added defaults to *any device*, the rest to
+*none*. The channel is passed through unchanged.
+
+**Plugged something in after booting?** Press **Rescan MIDI** in Setup (or
+`~scanMidiSources.();`). It re-initialises the MIDI client, so a keyboard connected
+mid-session is picked up without restarting anything.
+
+The binding is stored as the device's **label**, not its uid: uids are handed out per
+session and shuffle when you replug, so a saved uid would point at whatever happened to be
+first tomorrow. A label that is not connected right now still shows in the menu marked
+*(not connected)*, and simply receives nothing until the device is back — which is also
+what tells you why an instrument is silent.
 
 `Ctrl+.` frees every synth, and with it the plugin instance and whatever you dialled in.
 So an instrument's program data is snapshotted every `~vstSnapshotSecs` (60 s) and put

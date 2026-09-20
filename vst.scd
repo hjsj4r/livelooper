@@ -38,14 +38,17 @@
 ~vsts    = ~vsts ? [];
 ~vstGen  = ~vstGen ? 0;            // bumped when the list or an instrument's state changes
 ~vstPlugins = ~vstPlugins ? [];    // keys the scan found, sorted
-~vstMidiTarget = ~vstMidiTarget ? nil;
 ~vstMeterNodes = ~vstMeterNodes ? IdentityDictionary.new;
+~midiSources  = ~midiSources ? [];  // [(uid:, device:, name:, label:), ...]
+~midiGen      = ~midiGen ? 0;       // bumped when the source list changes
 
 if (~vstAvailable.not) {
     "vst.scd: the VSTPlugin extension is not installed — instruments disabled. See README.".warn;
     ~vstAdd = { |...args| "vst: VSTPlugin is not installed".warn; nil };
     ~vstRemove = ~vstAdd; ~vstEditor = ~vstAdd; ~vstSearch = { |done| done.value([]) };
     ~vstLevel = { |inst, v| nil }; ~rebuildVsts = { nil }; ~setVstMeters = { |on| nil };
+    ~scanMidiSources = { |done| ~midiSources = []; done.value(~midiSources) };
+    ~vstSetMidiSource = { |i, label| nil };
 } {
 
 SynthDef(\vsti, { |out = 0|
@@ -75,9 +78,14 @@ SynthDef(\vstFader, { |inBus = 0, out = 0, level = 1|
 // ── One instrument ──────────────────────────────────────────
 ~vstLabel = { |inst| "[vst" ++ inst[\idx] ++ " " ++ inst[\name] ++ "]" };
 
-~newVst = { |name, plugin, i|
+// midiSrc is which keyboard plays this instrument, stored as the DEVICE LABEL rather
+// than the uid: uids are assigned per session and change when you replug, so a saved
+// "uid 0" would point at whatever happens to be first tomorrow. "" = none, "*" = any
+// device, anything else = that label.
+~newVst = { |name, plugin, i, midiSrc|
     (idx: i, name: name.asString, plugin: plugin.asString, bus: nil, synth: nil,
-        fader: nil, ctl: nil, level: 1.0, state: \closed, data: nil, outAmp: 0);
+        fader: nil, ctl: nil, level: 1.0, state: \closed, data: nil, outAmp: 0,
+        midiSrc: (midiSrc ? "").asString);
 };
 
 // synths + controller + open. Called at creation, after Ctrl+., after a reboot.
@@ -117,9 +125,10 @@ SynthDef(\vstFader, { |inBus = 0, out = 0, level = 1|
     inst;
 };
 
-// Keeps ~vstInstruments (what Save writes) in step with the session.
+// Keeps ~vstInstruments (what Save writes) in step with the session. Three fields per
+// instrument; a two-field entry from an older config still loads (no MIDI source).
 ~syncVstVars = {
-    ~vstInstruments = ~vsts.collect { |inst| [inst[\name], inst[\plugin]] };
+    ~vstInstruments = ~vsts.collect { |inst| [inst[\name], inst[\plugin], inst[\midiSrc] ? ""] };
     ~settingsMarkDirty !? { ~settingsMarkDirty.(\vstInstruments) };
     ~vstGen = ~vstGen + 1;
 };
@@ -142,10 +151,13 @@ SynthDef(\vstFader, { |inBus = 0, out = 0, level = 1|
         ("vstAdd refused — the name " ++ nm.asCompileString
             ++ " is already an instrument or a sample bank").warn; nil }
     {
-        inst = ~newVst.(nm, plugin, ~vsts.size);
+        inst = ~newVst.(nm, plugin, ~vsts.size,
+            // The first instrument takes any keyboard, so one instrument plus one keyboard
+            // needs no setting up. Once something IS bound, a new instrument starts on
+            // none rather than silently doubling whatever you play.
+            if (~vsts.any { |x| (x[\midiSrc] ? "").isEmpty.not }) { "" } { "*" });
         inst[\bus] = Bus.audio(s, 2);
         ~vsts = ~vsts ++ [inst];
-        ~vstMidiTarget ?? { ~vstMidiTarget = inst[\idx] };  // the first one gets the keyboard
         ~syncVstVars.();
         fork {
             s.sync;
@@ -162,12 +174,8 @@ SynthDef(\vstFader, { |inBus = 0, out = 0, level = 1|
         ~dirt.soundLibrary.freeSynths(inst[\name].asSymbol);
         ~vsts = ~vsts.reject { |x| x === inst };
         ~vsts.do { |x, k| x[\idx] = k };
-        ~vstMidiTarget = case
-            { ~vsts.isEmpty } { nil }
-            { ~vstMidiTarget.isNil } { nil }
-            { ~vstMidiTarget == i } { 0 }
-            { ~vstMidiTarget > i } { ~vstMidiTarget - 1 }
-            { ~vstMidiTarget };
+        // MIDI bindings ride on the instruments themselves, so removing one cannot leave
+        // a dangling target — there is simply one less thing listening.
         ~syncVstVars.();
         (~vstLabel.(inst) ++ " REMOVED — " ++ ~vsts.size ++ " instruments").postln;
         inst;
@@ -191,35 +199,99 @@ SynthDef(\vstFader, { |inBus = 0, out = 0, level = 1|
     };
 };
 
-~setVstMidiTarget = { |i|
-    ~vstMidiTarget = if (i.isNil or: { i < 0 } or: { i >= ~vsts.size }) { nil } { i.asInteger };
-    ~vstGen = ~vstGen + 1;
-    ~vstMidiTarget;
+// ── Hardware MIDI in ────────────────────────────────────────
+// A keyboard is chosen PER INSTRUMENT, so two controllers can play two plugins at once,
+// and adding a second instrument does not silently double what you play.
+//
+// The responders take everything and dispatch in the handler, rather than one set of
+// MIDIdefs per source: re-binding is then a field on the instrument, not a teardown and
+// rebuild of seven responders, and a device that arrives mid-set needs no new responder
+// at all. .fix so Ctrl+. does not disconnect the keyboard.
+//
+// Straight through and untimestamped: for playing live you want the shortest path there
+// is, and the jitter is one control block (~1.5 ms). Nothing here is compensated — you
+// hear the instrument directly, so the only lever is keeping the path short.
+
+// The label is what a person recognises and what gets saved. Windows usually reports
+// device and name identically ("CASIO USB-MIDI"), so don't print it twice.
+~midiLabel = { |device, name|
+    var d = (device ? "").asString.stripWhiteSpace, n = (name ? "").asString.stripWhiteSpace;
+    case { d.isEmpty } { n } { n.isEmpty or: { n == d } } { d } { d ++ " — " ++ n };
 };
 
-// ── Hardware MIDI in ────────────────────────────────────────
-// Everything a keyboard sends goes to ONE instrument, ~vstMidiTarget, channel untouched.
-// Straight through, untimestamped: for playing live you want the shortest path, and the
-// jitter is one control block. .fix so Ctrl+. does not disconnect the keyboard.
-if (~vstMidiIn ? true) {
-    if (MIDIClient.initialized.not) {
-        try { MIDIClient.init(verbose: false); MIDIIn.connectAll(false) }
-            { |e| ("vst: MIDI init failed — " ++ e.errorString).warn };
+// Re-enumerate. MIDIClient.init disposes the old client first, so this picks up a
+// keyboard plugged in after boot; connectAll then opens every source. Both can throw on
+// a machine with no MIDI at all, hence the try.
+~scanMidiSources = { |done|
+    try {
+        MIDIClient.init(verbose: false);
+        MIDIIn.connectAll(false);
+        ~midiSources = MIDIClient.sources.collect { |e|
+            (uid: e.uid, device: e.device.asString, name: e.name.asString,
+                label: ~midiLabel.(e.device, e.name))
+        };
+    } { |e|
+        ("vst: MIDI scan failed — " ++ e.errorString).warn;
+        ~midiSources = [];
     };
-    ~vstMidi = { |cmd ...args|
-        ~vstMidiTarget !? { |i|
-            ~vsts[i] !? { |inst| inst[\ctl] !? { |c| if (c.isOpen) { c.midi.performList(cmd, args) } } };
+    ~midiGen = ~midiGen + 1;
+    ~vstGen  = ~vstGen + 1;          // labels resolve against the new list
+    ("vst: MIDI in — " ++ ~midiSources.size ++ " source(s)"
+        ++ if (~midiSources.isEmpty) { "" } { ": " ++ ~midiSources.collect({ |x| x[\label] }).join(", ") }).postln;
+    done.value(~midiSources);
+    ~midiSources;
+};
+
+// Which uids a stored label means right now. A label that no longer matches anything
+// (keyboard unplugged) resolves to nothing rather than to the wrong device.
+~midiUidsFor = { |label|
+    var l = (label ? "").asString;
+    case
+    { l.isEmpty } { [] }
+    { l == "*" }  { ~midiSources.collect { |x| x[\uid] } }
+    { ~midiSources.select({ |x| x[\label] == l }).collect { |x| x[\uid] } };
+};
+
+// Bind an instrument to a keyboard. "" = none, "*" = any device, else the label.
+~vstSetMidiSource = { |i, label|
+    var inst = ~vsts[i.asInteger], l = (label ? "").asString;
+    case
+    { inst.isNil } { ("vstSetMidiSource: no instrument " ++ i).warn; nil }
+    { l.isEmpty.not and: { l != "*" } and: { ~midiSources.any({ |x| x[\label] == l }).not } } {
+        ("vstSetMidiSource: no MIDI source called " ++ l.asCompileString
+            ++ " — rescan, or pick one of: " ++ ~midiSources.collect({ |x| x[\label] }).join(", ")).warn;
+        nil;
+    }
+    {
+        inst[\midiSrc] = l;
+        ~syncVstVars.();
+        (~vstLabel.(inst) ++ " MIDI from "
+            ++ case { l.isEmpty } { "nothing" } { l == "*" } { "any device" } { l }).postln;
+        l;
+    };
+};
+
+if (~vstMidiIn ? true) {
+    // src is the source's uid. An instrument on "*" takes everything; one bound to a
+    // label takes only that device's uids.
+    ~vstMidi = { |cmd, src ...args|
+        ~vsts.do { |inst|
+            var l = inst[\midiSrc] ? "";
+            if (l.isEmpty.not and: { (l == "*") or: { ~midiUidsFor.(l).any { |u| u == src } } }) {
+                inst[\ctl] !? { |c| if (c.isOpen) { c.midi.performList(cmd, args) } };
+            };
         };
     };
-    MIDIdef.noteOn (\vstNoteOn,  { |vel, num, chan| ~vstMidi.(\noteOn,  chan, num, vel) }).fix;
-    MIDIdef.noteOff(\vstNoteOff, { |vel, num, chan| ~vstMidi.(\noteOff, chan, num, vel) }).fix;
-    MIDIdef.cc     (\vstCc,      { |val, num, chan| ~vstMidi.(\control, chan, num, val) }).fix;
-    MIDIdef.bend   (\vstBend,    { |val, chan|      ~vstMidi.(\bend,    chan, val) }).fix;
-    MIDIdef.touch  (\vstTouch,   { |val, chan|      ~vstMidi.(\touch,   chan, val) }).fix;
-    MIDIdef.polytouch(\vstPoly,  { |val, num, chan| ~vstMidi.(\polyTouch, chan, num, val) }).fix;
-    MIDIdef.program(\vstProgram, { |val, chan|      ~vstMidi.(\program, chan, val) }).fix;
-    ("vst: MIDI in — " ++ MIDIClient.sources.size ++ " source(s): "
-        ++ MIDIClient.sources.collect({ |x| x.device ++ " " ++ x.name }).join(", ")).postln;
+    MIDIdef.noteOn (\vstNoteOn,  { |vel, num, chan, src| ~vstMidi.(\noteOn,  src, chan, num, vel) }).fix;
+    MIDIdef.noteOff(\vstNoteOff, { |vel, num, chan, src| ~vstMidi.(\noteOff, src, chan, num, vel) }).fix;
+    MIDIdef.cc     (\vstCc,      { |val, num, chan, src| ~vstMidi.(\control, src, chan, num, val) }).fix;
+    MIDIdef.bend   (\vstBend,    { |val, chan, src|      ~vstMidi.(\bend,    src, chan, val) }).fix;
+    MIDIdef.touch  (\vstTouch,   { |val, chan, src|      ~vstMidi.(\touch,   src, chan, val) }).fix;
+    MIDIdef.polytouch(\vstPoly,  { |val, num, chan, src| ~vstMidi.(\polyTouch, src, chan, num, val) }).fix;
+    MIDIdef.program(\vstProgram, { |val, chan, src|      ~vstMidi.(\program, src, chan, val) }).fix;
+    // What is plugged in RIGHT NOW. Rescanned from the dashboard whenever you plug
+    // something in mid-session.
+    ~scanMidiSources.();
 };
 
 // ── Meters ──────────────────────────────────────────────────
@@ -270,11 +342,12 @@ ServerTree.add(~buildVsts, s);
 };
 ServerQuit.add(~forgetVsts, s);
 
-// From ~vstInstruments — what config.scd (or a later session file) says.
+// From ~vstInstruments — what config.scd (or a later session file) says. Entries are
+// [name, plugin, midiSrc]; a two-field entry from an older config still loads, with no
+// keyboard bound.
 ~rebuildVsts = {
     ~vsts.do { |inst| ~freeVst.(inst) };
-    ~vsts = ~vstInstruments.collect { |pair, i| ~newVst.(pair[0], pair[1], i) };
-    ~vstMidiTarget = if (~vsts.isEmpty) { nil } { (~vstMidiTarget ? 0).clip(0, ~vsts.size - 1) };
+    ~vsts = ~vstInstruments.collect { |e, i| ~newVst.(e[0], e[1], i, e[2]) };
     ~vstGen = ~vstGen + 1;
     fork {
         s.sync;

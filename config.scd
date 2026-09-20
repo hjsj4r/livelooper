@@ -67,15 +67,22 @@
 // Folders to scan for plugins, on top of the standard Windows VST2/VST3 locations. The
 // scan is cached by VSTPlugin, so a boot costs a fraction of a second once it has run.
 ~vstDirs = ["D:/vst"];
-// Instruments the rig boots with, as [name, plugin] pairs — the name is what Tidal
-// plays it as (`# s "surge"`) and what the dashboard shows; the plugin is the key the
-// scan gives it ("Surge XT.vst3"). Added from the dashboard's Setup view; Save writes
-// them here like the tracks. A session starts with none unless listed.
+// Instruments the rig boots with, as [name, plugin, midi] triples:
+//   name    what Tidal plays it as (`# s "surge"`) and what the dashboard shows.
+//           Letters, digits and _ only — it is a Tidal sound name.
+//   plugin  the key the scan gives it, e.g. "Surge XT.vst3".
+//   midi    which keyboard plays it: "" none, "*" any device, or the device's label
+//           ("CASIO USB-MIDI"). A LABEL, not a uid — uids are handed out per session and
+//           change when you replug, so a saved uid would point at the wrong thing.
+// Added from the dashboard's Setup view; Save writes them here like the tracks. A
+// session starts with none unless listed.
+//     ~vstInstruments = [["surge", "Surge XT.vst3", "CASIO USB-MIDI"]];
 ~vstInstruments = [];
 ~maxVsts        = 8;         // each one is a plugin instance; Surge XT is light, a big
                              // sampler is not — the machine's RAM is the real limit
-// Hardware MIDI (a keyboard, the SPD-SX) is forwarded to ONE instrument, chosen on the
-// dashboard. The channel is passed through unchanged.
+// Read hardware MIDI at all. Each instrument picks its own keyboard from what the scan
+// finds (dashboard → Rescan MIDI after plugging one in), so two controllers can play two
+// plugins at once. The channel is passed through unchanged.
 ~vstMidiIn      = true;
 // Plugin state is snapshotted this often so it survives Ctrl+. (which frees the plugin
 // instance). 0 disables. Session saving will reuse these snapshots.

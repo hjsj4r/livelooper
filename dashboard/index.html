@@ -117,6 +117,8 @@
   .fxbar { width: 52px; height: 6px; background: #10141b; border-radius: 3px; overflow: hidden; flex-shrink: 0; }
   .fxbar > i { display: block; height: 100%; width: 0%; background: var(--rec); transition: width .05s linear; }
   .track.driven { border-color: var(--rec); }
+  .track select { background: #10141b; border: 1px solid var(--line); border-radius: 7px; color: var(--text);
+                   padding: 7px 8px; font: inherit; font-size: 12px; max-width: 170px; }
   .track button { background: #10141b; color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
   .track button:hover { border-color: #3a4557; }
   .track .rec { min-width: 104px; }
@@ -352,20 +354,20 @@
     <div class="panel">
       <div class="label row">
         <span>Instruments (VST)</span>
-        <span><button class="act small" id="vstScan">Rescan plugins</button></span>
+        <span><button class="act small" id="midiScan">Rescan MIDI</button> <button class="act small" id="vstScan">Rescan plugins</button></span>
       </div>
       <div class="note" id="vstMissing" style="display:none;margin-top:0">
         The <b>VSTPlugin</b> extension is not installed in SuperCollider, so instruments are off. See the README.
       </div>
       <table class="tt" id="vstTable">
-        <thead><tr><th>#</th><th>name (Tidal: <code># s "name"</code>)</th><th>plugin</th><th>state</th><th></th></tr></thead>
+        <thead><tr><th>#</th><th>name (Tidal: <code># s "name"</code>)</th><th>plugin</th><th>MIDI keyboard</th><th>state</th><th></th></tr></thead>
         <tbody id="vstBody"></tbody>
         <tfoot>
           <tr class="new">
             <td class="idx">+</td>
             <td><input type="text" id="vstNewName" placeholder="name, e.g. surge (letters, digits, _)"></td>
             <td><select id="vstNewPlugin"></select></td>
-            <td><span class="dim" id="vstCount"></span></td>
+            <td class="dim">pick after adding</td><td><span class="dim" id="vstCount"></span></td>
             <td><button class="add" id="vstAdd">Add instrument</button></td>
           </tr>
         </tfoot>
@@ -1060,13 +1062,28 @@ $('newName').onkeydown = (e) => { if (e.key === 'Enter') $('addTrack').click(); 
 // ---- VST instruments ----
 // SC owns the list; this only draws it. /vstInit is re-sent whenever an instrument is
 // added, removed, changes state (opening -> open / failed) or takes the keyboard.
-let vsts = [], vstMidi = -1, vstAvailable = false, vstPlugins = [];
+let vsts = [], vstAvailable = false, vstPlugins = [], midiSources = [];
 const VST_STATE = { open: '--play', opening: '--armed', failed: '--rec', closed: '--idle' };
+// A keyboard is picked per instrument, by label. '' = none, '*' = any device. A label
+// that is saved but not plugged in right now still shows, marked, so you can see why
+// nothing plays rather than finding the menu silently reset.
+function midiMenu(current) {
+  const opts = [['', 'no MIDI'], ['*', 'any device']]
+    .concat(midiSources.map(s => [s, s]));
+  if (current && current !== '*' && !midiSources.includes(current)) opts.push([current, current + ' (not connected)']);
+  return `<select class="midi" title="which keyboard plays this instrument">` +
+    opts.map(([v, t]) => `<option value="${esc(v)}"${v === current ? ' selected' : ''}>${esc(t)}</option>`).join('') +
+    `</select>`;
+}
+let lastVstArgs = [0, 0];
 function applyVsts(args) {
-  const [n, midi, avail] = args;
-  vstMidi = +midi; vstAvailable = !!+avail;
+  lastVstArgs = args = args || lastVstArgs;
+  const [n, avail] = args;
+  vstAvailable = !!+avail;
   vsts = [];
-  for (let i = 3; i + 2 < args.length; i += 3) vsts.push({ name: String(args[i]), plugin: String(args[i + 1]), state: String(args[i + 2]) });
+  for (let i = 2; i + 3 < args.length; i += 4) {
+    vsts.push({ name: String(args[i]), plugin: String(args[i + 1]), state: String(args[i + 2]), midi: String(args[i + 3]) });
+  }
   // Perform strips
   $('vstPanel').style.display = vsts.length ? '' : 'none';
   const c = $('vsts'); c.innerHTML = '';
@@ -1078,17 +1095,19 @@ function applyVsts(args) {
       `<div class="track-in">${esc(v.plugin.replace(/\.vst3?$/i, ''))}<span class="meter" title="output level"><i></i></span></div></div>` +
       `<span class="track-badge" style="background:${getComputedStyle(document.documentElement).getPropertyValue(VST_STATE[v.state] || '--idle')}">${esc(v.state)}</span>` +
       `<input type="range" class="fader" min="0" max="1" step="0.01" value="1">` +
-      `<button class="midi ${idx === vstMidi ? 'on' : ''}" title="send the MIDI keyboard here">${idx === vstMidi ? '● MIDI' : 'MIDI'}</button>` +
+      midiMenu(v.midi) +
       `<button class="edit" title="open the plugin's own window" ${v.state === 'open' ? '' : 'disabled'}>Editor</button>`;
     el.querySelector('.fader').oninput = (e) => {
       lastLocalEdit['vst' + idx] = performance.now();
       cmd('/cmd/vstLevel', [idx, parseFloat(e.target.value)]);
     };
-    el.querySelector('.midi').onclick = () => cmd('/cmd/vstMidi', [idx === vstMidi ? -1 : idx]);
+    el.querySelector('.midi').onchange = (e) => cmd('/cmd/vstMidi', [idx, e.target.value]);
     el.querySelector('.edit').onclick = () => cmd('/cmd/vstEditor', [idx]);
     c.appendChild(el);
   });
-  $('vstHint').textContent = vstMidi >= 0 && vsts[vstMidi] ? `MIDI keyboard → ${vsts[vstMidi].name}` : 'MIDI keyboard → nothing (press MIDI on one)';
+  $('vstHint').textContent = midiSources.length
+    ? `${midiSources.length} MIDI source${midiSources.length === 1 ? '' : 's'}: ${midiSources.join(', ')}`
+    : 'no MIDI devices found — plug one in, then Rescan MIDI in Setup';
   // Setup table
   $('vstMissing').style.display = vstAvailable ? 'none' : '';
   $('vstTable').style.display = vstAvailable ? '' : 'none';
@@ -1096,9 +1115,11 @@ function applyVsts(args) {
   vsts.forEach((v, idx) => {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td class="idx">${idx}</td><td>${esc(v.name)}</td><td class="dim">${esc(v.plugin)}</td>` +
+      `<td>${midiMenu(v.midi)}</td>` +
       `<td>${esc(v.state)}</td><td style="white-space:nowrap">` +
       `<button class="edit" title="open the plugin's own window" ${v.state === 'open' ? '' : 'disabled'}>Editor</button> ` +
       `<button class="rm">Remove</button></td>`;
+    tr.querySelector('.midi').onchange = (e) => cmd('/cmd/vstMidi', [idx, e.target.value]);
     tr.querySelector('.edit').onclick = () => cmd('/cmd/vstEditor', [idx]);
     tr.querySelector('.rm').onclick = () => {
       if (!confirm(`Remove "${v.name}"? Tidal patterns using # s "${v.name}" go silent.`)) return;
@@ -1141,6 +1162,12 @@ $('vstAdd').onclick = () => {
 };
 $('vstNewName').onkeydown = (e) => { if (e.key === 'Enter') $('vstAdd').click(); };
 $('vstScan').onclick = () => { cmd('/cmd/vstScan', []); toast('scanning plugins…'); };
+// Re-enumerates MIDI: what a keyboard plugged in after boot needs.
+$('midiScan').onclick = () => { cmd('/cmd/midiScan', []); toast('rescanning MIDI…'); };
+function applyMidiSources(args) {
+  midiSources = args.map(String);
+  applyVsts(lastVstArgs);      // the menus are built from this list, so redraw them
+}
 
 // ---- settings ----
 // SC owns both the spec and the values. The browser holds no defaults of its own: a
@@ -1235,6 +1262,7 @@ es.onmessage = (e) => {
     case '/devicesDone': renderDevices(); break;
     case '/vstInit':     applyVsts(a); break;
     case '/vstPlugins':  applyVstPlugins(a); break;
+    case '/midiSources': applyMidiSources(a); break;
     case '/vstLevels':   applyVstLevels(a); break;
     case '/vstMeters':   applyVstMeters(a); break;
     case '/state': {

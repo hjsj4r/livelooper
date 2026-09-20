@@ -82,18 +82,26 @@ OSCdef(\cmdVstAdd,    { |msg| ~vstAdd !? { ~vstAdd.(msg[1].asString, msg[2].asSt
 OSCdef(\cmdVstRemove, { |msg| ~vstRemove !? { ~vstRemove.(msg[1].asInteger) } }, '/cmd/vstRemove').fix;
 OSCdef(\cmdVstLevel,  { |msg| (~vsts ? [])[msg[1].asInteger] !? { |i| ~vstLevel.(i, msg[2].asFloat) } }, '/cmd/vstLevel').fix;
 OSCdef(\cmdVstEditor, { |msg| ~vstEditor !? { ~vstEditor.(msg[1].asInteger) } }, '/cmd/vstEditor').fix;
-OSCdef(\cmdVstMidi,   { |msg| ~setVstMidiTarget !? { ~setVstMidiTarget.(msg[1].asInteger) } }, '/cmd/vstMidi').fix;
+// The MIDI source is per instrument, as a label ("" none, "*" any, else the device).
+OSCdef(\cmdVstMidi,   { |msg|
+    ~vstSetMidiSource !? { ~vstSetMidiSource.(msg[1].asInteger, if (msg.size > 2) { msg[2].asString } { "" }) };
+}, '/cmd/vstMidi').fix;
 OSCdef(\cmdVstScan,   { ~vstSearch !? { ~vstSearch.() } }, '/cmd/vstScan').fix;
+OSCdef(\cmdMidiScan,  { ~scanMidiSources !? { ~scanMidiSources.() } }, '/cmd/midiScan').fix;
 
-// The instruments: name, plugin, state per instrument, then which one has the keyboard.
+// The instruments: name, plugin, state and MIDI source label, four fields each.
 ~sendVsts = {
     var vsts = ~vsts ? [];
-    ~dash.sendMsg('/vstInit', vsts.size, (~vstMidiTarget ? -1).asInteger,
-        (~vstAvailable ? false).binaryValue,
-        *vsts.collect({ |i| [i[\name].asString, i[\plugin].asString, i[\state].asString] }).flatten);
+    ~dash.sendMsg('/vstInit', vsts.size, (~vstAvailable ? false).binaryValue,
+        *vsts.collect({ |i| [i[\name].asString, i[\plugin].asString, i[\state].asString,
+            (i[\midiSrc] ? "").asString] }).flatten);
 };
 ~sendVstPlugins = {
     ~dash.sendMsg('/vstPlugins', *(~vstPlugins ? []).collect(_.asString));
+};
+// The keyboards this machine can see, by label — what the per-instrument menu offers.
+~sendMidiSources = {
+    ~dash.sendMsg('/midiSources', *(~midiSources ? []).collect({ |x| x[\label].asString }));
 };
 ~sendVstLevels = {
     ~dash.sendMsg('/vstLevels', *(~vsts ? []).collect({ |i| (i[\level] ? 1.0).asFloat }));
@@ -210,7 +218,7 @@ OSCdef(\cmdReloadConfig, { |msg|
 OSCdef(\cmdGetTracks, {
     ~sendTracks.(); ~sendState.(); ~sendLevels.(); ~sendFx.(); ~sendCycles.(); ~sendClock.();
     ~sendPins.(); ~sendConfigSpec.(); ~sendConfig.(); ~sendRig.(); ~sendDevices.();
-    ~sendVsts.(); ~sendVstPlugins.(); ~sendVstLevels.();
+    ~sendVsts.(); ~sendVstPlugins.(); ~sendVstLevels.(); ~sendMidiSources.();
 }, '/cmd/getTracks').fix;
 
 // ── State TO the dashboard ──────────────────────────────────
@@ -296,7 +304,7 @@ OSCdef(\cmdGetTracks, {
         var tracks, n = -1;
         var lastStates, lastLevels, lastFx, lastCycles;
         var lastPins = nil, pinned, lastLayout = nil, lastBoot = nil, lastScan = nil;
-        var lastVst = nil, lastVstLevels = nil, vstLevels;
+        var lastVst = nil, lastVstLevels = nil, vstLevels, lastMidi = nil;
         var lastFocus = nil, lastClick = nil, nextClock = 0, nextMeter = 0;
         var changed, moved, driven, rebar, now;
         while({ myGen == ~dashGen }, {
@@ -354,6 +362,7 @@ OSCdef(\cmdGetTracks, {
             if (lastVst != ~vstGen) {
                 lastVst = ~vstGen; ~sendVsts.(); ~sendVstPlugins.(); ~sendVstLevels.(); ~sendConfig.();
             };
+            if (lastMidi != ~midiGen) { lastMidi = ~midiGen; ~sendMidiSources.(); ~sendVsts.() };
             vstLevels = (~vsts ? []).collect { |i| i[\level] ? 1.0 };
             if (vstLevels != lastVstLevels) { lastVstLevels = vstLevels; ~sendVstLevels.() };
             if (now >= nextClock) { nextClock = now + clockEvery; ~sendClock.() };

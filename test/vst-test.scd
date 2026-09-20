@@ -10,7 +10,7 @@
 //  Run it headless (no ZOOM H8 needed):
 //    & "C:\Program Files\SuperCollider-3.14.1\sclang.exe" -D d:/livelooper/test/vst-test.scd
 //
-//  Expect: "41 passed, 0 failed".
+//  Expect: "61 passed, 0 failed".
 // ============================================================
 (
 var pass = 0, fail = 0, ok, waitFor, inst, node, sandboxNote;
@@ -24,6 +24,10 @@ waitFor = { |cond, secs = 10|
     while { cond.value.not and: { (Main.elapsedTime - t) < secs } } { 0.1.wait };
     cond.value;
 };
+// Meters only flow while something keeps asking (~meterHold is 5 s), exactly as the
+// browser does it. A block of assertions that takes longer than that must renew the
+// subscription, or every level reads 0 and the tests lie.
+~pulse = { NetAddr.localAddr.sendMsg('/cmd/meters', 1) };
 
 s = Server(\llVstTest, NetAddr("127.0.0.1", 57161));
 Server.default = s;
@@ -60,7 +64,19 @@ s.waitForBoot({
         waitFor.({ ~vstPlugins.notEmpty }, 30);
         ok.("scan finds plugins",             ~vstPlugins.notEmpty);
         ok.("Surge XT is among them",         ~vstPluginKnown.("Surge XT.vst3"));
-        ok.("no instruments yet",             ~vsts.isEmpty and: { ~vstMidiTarget.isNil });
+        ok.("no instruments yet",             ~vsts.isEmpty);
+
+        "".postln; "--- MIDI SOURCES ---".postln;
+        ~scanMidiSources.();
+        ("        (" ++ ~midiSources.size ++ " source(s): "
+            ++ ~midiSources.collect({ |x| x[\label] }).join(", ") ++ ")").postln;
+        ok.("scan returns a list",            ~midiSources.isKindOf(SequenceableCollection));
+        ok.("every source has a uid + label", ~midiSources.every { |x| x[\uid].notNil and: { x[\label].isString } });
+        ok.("labels are not doubled up",      ~midiLabel.("CASIO", "CASIO") == "CASIO");
+        ok.("device and port both shown when they differ", ~midiLabel.("MPK", "port 1") == "MPK — port 1");
+        ok.("\"\" resolves to no uids",       ~midiUidsFor.("").isEmpty);
+        ok.("\"*\" resolves to every uid",    ~midiUidsFor.("*").size == ~midiSources.size);
+        ok.("an unplugged label resolves to nothing", ~midiUidsFor.("no such keyboard").isEmpty);
 
         "".postln; "--- ADD ---".postln;
         inst = ~vstAdd.("surge", "Surge XT.vst3");
@@ -69,9 +85,9 @@ s.waitForBoot({
         ok.("plugin opens",                   inst[\state] == \open);
         ok.("controller is loaded",           inst[\ctl].notNil and: { inst[\ctl].isOpen });
         ok.("has its own stereo bus",         inst[\bus].notNil and: { inst[\bus].numChannels == 2 });
-        ok.("~vstInstruments follows",        ~vstInstruments == [["surge", "Surge XT.vst3"]]);
+        ok.("~vstInstruments follows",        ~vstInstruments == [["surge", "Surge XT.vst3", "*"]]);
         ok.("layout marked unsaved",          ~settingsDirty.any { |k| k == \vstInstruments });
-        ok.("first instrument takes the keyboard", ~vstMidiTarget == 0);
+        ok.("first instrument takes any keyboard", inst[\midiSrc] == "*");
         ok.("Tidal knows # s \"surge\"",      ~dirt.soundLibrary.synthEvents[\surge].notNil);
 
         "".postln; "--- REFUSALS ---".postln;
@@ -96,23 +112,47 @@ s.waitForBoot({
         waitFor.({ (inst[\outAmp] ? 0) < 0.005 }, 6);
         ok.("...and stops after its sustain", (inst[\outAmp] ? 0) < 0.005);
 
+        ~pulse.();
         "".postln; "--- SOUND FROM A MIDI KEYBOARD ---".postln;
-        // MIDIIn's class-side hooks are exactly what a real port calls
-        MIDIIn.doNoteOnAction(0, 0, 60, 100);
+        // MIDIIn's class-side hooks are exactly what a real port calls; the first
+        // argument is the source uid, which is what the per-instrument binding matches.
+        MIDIIn.doNoteOnAction(7777, 0, 60, 100);
         0.5.wait;
-        ok.("keyboard note sounds",           (inst[\outAmp] ? 0) > 0.01);
-        MIDIIn.doNoteOffAction(0, 0, 60, 0);
+        ok.("\"any device\" plays whatever arrives", (inst[\outAmp] ? 0) > 0.01);
+        MIDIIn.doNoteOffAction(7777, 0, 60, 0);
         waitFor.({ (inst[\outAmp] ? 0) < 0.005 }, 6);
         ok.("...and stops on note off",       (inst[\outAmp] ? 0) < 0.005);
-        ~setVstMidiTarget.(-1);
-        ok.("target can be cleared",          ~vstMidiTarget.isNil);
-        MIDIIn.doNoteOnAction(0, 0, 60, 100);
+
+        ~vstSetMidiSource.(0, "");
+        ok.("binding can be cleared",         inst[\midiSrc] == "");
+        MIDIIn.doNoteOnAction(7777, 0, 60, 100);
         0.5.wait;
-        ok.("no target -> keyboard is silent", (inst[\outAmp] ? 0) < 0.005);
-        MIDIIn.doNoteOffAction(0, 0, 60, 0);
-        ~setVstMidiTarget.(0);
+        ok.("no binding -> silent",           (inst[\outAmp] ? 0) < 0.005);
+        MIDIIn.doNoteOffAction(7777, 0, 60, 0);
+
+        // Bound to ONE device: a fake source stands in for a second keyboard, so the
+        // routing is tested whatever is actually plugged into this machine.
+        ~midiSources = ~midiSources ++ [(uid: 4242, device: "Fake A", name: "Fake A", label: "Fake A")]
+            ++ [(uid: 4343, device: "Fake B", name: "Fake B", label: "Fake B")];
+        ~midiGen = ~midiGen + 1;
+        ok.("bind to a named device",         ~vstSetMidiSource.(0, "Fake A") == "Fake A");
+        ok.("...saved as the label",          ~vstInstruments[0][2] == "Fake A");
+        ~pulse.();
+        MIDIIn.doNoteOnAction(4242, 0, 60, 100);
+        0.5.wait;
+        ok.("that device plays it",           (inst[\outAmp] ? 0) > 0.01);
+        MIDIIn.doNoteOffAction(4242, 0, 60, 0);
+        waitFor.({ (inst[\outAmp] ? 0) < 0.005 }, 6);
+        MIDIIn.doNoteOnAction(4343, 0, 60, 100);
+        0.5.wait;
+        ok.("another device does NOT",        (inst[\outAmp] ? 0) < 0.005);
+        MIDIIn.doNoteOffAction(4343, 0, 60, 0);
+        ok.("an unknown device is refused",   ~vstSetMidiSource.(0, "no such keyboard").isNil);
+        ok.("...and the binding is unchanged", inst[\midiSrc] == "Fake A");
+        ~vstSetMidiSource.(0, "*");
 
         "".postln; "--- LEVEL ---".postln;
+        ~pulse.(); 0.4.wait;
         ~vstLevel.(inst, 0);
         MIDIIn.doNoteOnAction(0, 0, 64, 100);
         0.5.wait;
@@ -144,17 +184,45 @@ s.waitForBoot({
         ok.("instrument gone",                ~vsts.isEmpty);
         ok.("~vstInstruments empty",          ~vstInstruments.isEmpty);
         ok.("Tidal entry gone",               ~dirt.soundLibrary.synthEvents[\surge].isNil);
-        ok.("no MIDI target left",            ~vstMidiTarget.isNil);
+        ok.("nothing is bound to MIDI now",   ~vsts.every { |x| (x[\midiSrc] ? "").isEmpty });
         ok.("no such instrument refused",     ~vstRemove.(5).isNil);
+        MIDIIn.doNoteOnAction(4242, 0, 60, 100);   // must not throw with no instruments
+        MIDIIn.doNoteOffAction(4242, 0, 60, 0);
+        ok.("MIDI with no instruments is harmless", true);
+
+        "".postln; "--- TWO INSTRUMENTS, TWO KEYBOARDS ---".postln;
+        ~vstAdd.("one", "Surge XT.vst3");
+        ~vstAdd.("two", "Surge XT.vst3");
+        waitFor.({ ~vsts.size == 2 and: { ~vsts.every { |x| x[\state] == \open } } }, 25);
+        ok.("the first takes any device",     ~vsts[0][\midiSrc] == "*");
+        ok.("the second starts unbound",      ~vsts[1][\midiSrc] == "");
+        ~vstSetMidiSource.(0, "Fake A");
+        ~vstSetMidiSource.(1, "Fake B");
+        NetAddr.localAddr.sendMsg('/cmd/meters', 1);
+        0.6.wait;
+        MIDIIn.doNoteOnAction(4343, 0, 67, 100);
+        0.6.wait;
+        ok.("keyboard B plays instrument two", (~vsts[1][\outAmp] ? 0) > 0.01);
+        ok.("...and not instrument one",       (~vsts[0][\outAmp] ? 0) < 0.005);
+        MIDIIn.doNoteOffAction(4343, 0, 67, 0);
+        waitFor.({ (~vsts[1][\outAmp] ? 0) < 0.005 }, 6);
+        ~vstRemove.(1); ~vstRemove.(0);
 
         "".postln; "--- REBUILD FROM CONFIG ---".postln;
-        ~vstInstruments = [["s1", "Surge XT.vst3"], ["bad", "Nope.vst3"]];
+        ~vstInstruments = [["s1", "Surge XT.vst3", "Fake A"], ["bad", "Nope.vst3", ""]];
         ~rebuildVsts.();
         waitFor.({ ~vsts.size == 2 and: { ~vsts[0][\state] == \open } and: { ~vsts[1][\state] == \failed } }, 20);
         ok.("known plugin opens",             ~vsts[0][\state] == \open);
         ok.("unknown plugin is marked failed, not fatal", ~vsts[1][\state] == \failed);
-        ok.("saved as name/plugin pairs",
-            ~settingsValueString.(~vstInstruments) == "[[\"s1\", \"Surge XT.vst3\"], [\"bad\", \"Nope.vst3\"]]");
+        ok.("the saved keyboard is restored", ~vsts[0][\midiSrc] == "Fake A");
+        ok.("saved as name/plugin/midi triples",
+            ~settingsValueString.(~vstInstruments)
+                == "[[\"s1\", \"Surge XT.vst3\", \"Fake A\"], [\"bad\", \"Nope.vst3\", \"\"]]");
+        // a config written before this feature has two fields and must still load
+        ~vstInstruments = [["old", "Surge XT.vst3"]];
+        ~rebuildVsts.();
+        waitFor.({ ~vsts.size == 1 and: { ~vsts[0][\state] == \open } }, 20);
+        ok.("a two-field entry still loads",  ~vsts[0][\name] == "old" and: { ~vsts[0][\midiSrc] == "" });
 
         "".postln;
         ("======== " ++ pass ++ " passed, " ++ fail ++ " failed ========").postln;
